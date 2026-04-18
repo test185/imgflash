@@ -87,9 +87,18 @@ retry() {
     for i in $(seq 1 "$max"); do
         if "$@"; then return 0; fi
         [[ $i -eq $max ]] && { echo "错误：重试 $max 次后仍失败：$*" >&2; return 1; }
-        echo "  第 $i/$max 次重试，${delay} 秒后..."
+        echo "  第 $i/$max 次重试，${delay} 秒后..." >&2
         sleep "$delay"
     done
+}
+
+# 从 Packages 索引中提取指定包的指定字段
+pkg_field() {
+    local pkg="$1" field="$2"
+    awk -v pkg="$pkg" -v field="$field" '
+        /^Package: / { cur_pkg = $2 }
+        cur_pkg == pkg && index($0, field ": ") == 1 { print substr($0, length(field) + 3); exit }
+    ' "${PKG_INDEX}"
 }
 
 find_latest_deb() {
@@ -189,29 +198,35 @@ echo ""
 
 echo "==== 第1步：下载组件 ===="
 
-# --- 1a. Debian 签名内核 + 模块 ---
+# --- 1a. 下载 Debian 软件包索引 ---
+DEBIAN_SUITE="${DEBIAN_SUITE:-trixie}"
+PKG_INDEX="${BUILD_DIR}/Packages"
+echo "  下载 Debian ${DEBIAN_SUITE} 软件包索引..."
+retry "${RETRY_MAX}" "${RETRY_DELAY}" curl -sL \
+    "${DEBIAN_MIRROR}/dists/${DEBIAN_SUITE}/main/binary-amd64/Packages.gz" \
+    | gunzip > "${PKG_INDEX}"
+
+# --- 1b. Debian 签名内核 + 模块 ---
 echo "  提取 Debian 签名内核及模块..."
 KVER=$("${SCRIPT_DIR}/tools/extract-debian-kernel.sh" -o "${KERN_DIR}" -m "${REQUIRED_MODULES}")
 echo "  内核版本：${KVER}"
 
-# --- 1b. Debian shim + 签名 GRUB ---
+# --- 1c. Debian shim + 签名 GRUB（从同一索引查找）---
 echo "  下载 Debian shim..."
-SHIM_POOL="${DEBIAN_MIRROR}/pool/main/s/shim-signed/"
-SHIM_DEB=$(find_latest_deb "$SHIM_POOL" '^shim-signed_.*_amd64\.deb$')
-if [[ -z "$SHIM_DEB" ]]; then
+SHIM_PATH=$(pkg_field "shim-signed" "Filename")
+if [[ -z "${SHIM_PATH}" ]]; then
     echo "错误：找不到 shim-signed 包" >&2; exit 1
 fi
-echo "    ${SHIM_DEB}"
-retry "${RETRY_MAX}" "${RETRY_DELAY}" curl -fSL -o "${DL_DIR}/shim.deb" "${SHIM_POOL}${SHIM_DEB}"
+echo "    $(basename "${SHIM_PATH}")"
+retry "${RETRY_MAX}" "${RETRY_DELAY}" curl -fSL -o "${DL_DIR}/shim.deb" "${DEBIAN_MIRROR}/${SHIM_PATH}"
 
 echo "  下载 Debian 签名 GRUB..."
-GRUB_POOL="${DEBIAN_MIRROR}/pool/main/g/grub2/"
-GRUB_DEB=$(find_latest_deb "$GRUB_POOL" '^grub-efi-amd64-signed_.*_amd64\.deb$')
-if [[ -z "$GRUB_DEB" ]]; then
+GRUB_PATH=$(pkg_field "grub-efi-amd64-signed" "Filename")
+if [[ -z "${GRUB_PATH}" ]]; then
     echo "错误：找不到 grub-efi-amd64-signed 包" >&2; exit 1
 fi
-echo "    ${GRUB_DEB}"
-retry "${RETRY_MAX}" "${RETRY_DELAY}" curl -fSL -o "${DL_DIR}/grub.deb" "${GRUB_POOL}${GRUB_DEB}"
+echo "    $(basename "${GRUB_PATH}")"
+retry "${RETRY_MAX}" "${RETRY_DELAY}" curl -fSL -o "${DL_DIR}/grub.deb" "${DEBIAN_MIRROR}/${GRUB_PATH}"
 
 # --- 1c. BusyBox 静态二进制（动态解析最新版本）---
 echo "  检测最新 BusyBox 版本..."
