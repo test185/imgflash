@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# ImgFlash v3 - Debian Kernel + Module Extractor
+# ImgFlash - Debian Kernel + Module Extractor
 # =============================================================================
 # Downloads a Debian signed kernel and matching modules, extracts only the
 # required modules (with dependency resolution), and prepares a slim module
@@ -106,8 +106,12 @@ dpkg-deb -x "${WORK_DIR}/modules.deb" "${WORK_DIR}/modules-all"
 
 # Decompress .ko.zst / .ko.xz to .ko (ensures BusyBox modprobe compatibility)
 echo "  Decompressing kernel modules..." >&2
-find "${WORK_DIR}/modules-all" -name '*.ko.zst' -exec zstd -d -f {} -o ${0%.zst} \; -exec rm {} \;
-find "${WORK_DIR}/modules-all" -name '*.ko.xz'  -exec xz -d -f {} \;
+for f in $(find "${WORK_DIR}/modules-all" -name '*.ko.zst'); do
+    zstd -d -f "$f" -o "${f%.zst}" && rm "$f"
+done
+for f in $(find "${WORK_DIR}/modules-all" -name '*.ko.xz'); do
+    xz -d -f "$f"
+done
 
 # Run depmod on the full module tree
 depmod -b "${WORK_DIR}/modules-all" "${KVER}"

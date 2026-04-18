@@ -1,6 +1,6 @@
 #!/bin/sh
 # =============================================================================
-# ImgFlash v3 - Interactive Disk Image Installer
+# ImgFlash - Interactive Disk Image Installer
 # =============================================================================
 # Runs as PID 1 inside initramfs. Uses static GNU dd for progress display.
 # =============================================================================

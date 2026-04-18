@@ -1,6 +1,6 @@
 #!/bin/sh
 # =============================================================================
-# ImgFlash v3 - initramfs /init
+# ImgFlash - initramfs /init
 # =============================================================================
 # Pure initramfs-only boot: no rootfs, no overlayfs, no switch_root.
 # The initramfs IS the final runtime environment.

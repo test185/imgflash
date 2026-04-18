@@ -1,0 +1,43 @@
+name: "构建 ImgFlash 安装器 ISO"
+
+on:
+  workflow_dispatch:
+    inputs:
+      download_url:
+        description: '磁盘镜像下载地址（支持 raw / gz / xz / bz2 / zip / 7z）'
+        required: true
+      iso_name:
+        description: '输出 ISO 文件名(留空则使用原始名称)'
+        required: false
+
+jobs:
+  build:
+    name: "构建 ISO"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "检出仓库"
+        uses: actions/checkout@v4
+
+      - name: "安装构建依赖"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xorriso squashfs-tools mtools dosfstools syslinux-common isolinux \
+            curl dpkg kmod gcc make file \
+            xz-utils bzip2 p7zip-full unzip zstd
+
+      - name: "构建 ISO"
+        run: |
+          chmod +x build.sh tools/extract-debian-kernel.sh
+          ARGS="-u ${{ github.event.inputs.download_url }}"
+          if [ -n "${{ github.event.inputs.iso_name }}" ]; then
+            ARGS="$ARGS -n ${{ github.event.inputs.iso_name }}"
+          fi
+          sudo bash build.sh $ARGS
+
+      - name: "上传 ISO 产物"
+        uses: actions/upload-artifact@v4
+        with:
+          name: imgflash-iso
+          path: output/*.iso
