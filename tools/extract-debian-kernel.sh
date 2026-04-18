@@ -1,6 +1,7 @@
 #!/bin/bash
 # =============================================================================
 # ImgFlash - Debian 签名内核及模块提取工具
+# =============================================================================
 
 set -euo pipefail
 
@@ -37,12 +38,20 @@ retry() {
     done
 }
 
-# 从 Packages 索引中提取指定包的指定字段
+# 从 Packages 索引中提取指定包的指定字段（如有重复取最新版本）
 pkg_field() {
     local pkg="$1" field="$2"
     awk -v pkg="$pkg" -v field="$field" '
-        /^Package: / { cur_pkg = $2 }
-        cur_pkg == pkg && index($0, field ": ") == 1 { print substr($0, length(field) + 3); exit }
+        /^Package: / { cur_pkg = $2; in_target = (cur_pkg == pkg) }
+        in_target && /^Version: / { cur_ver = $2 }
+        in_target && index($0, field ": ") == 1 { cur_val = substr($0, length(field) + 3) }
+        in_target && /^$/ {
+            if (cur_ver > best_ver || best_ver == "") {
+                best_ver = cur_ver; best_val = cur_val
+            }
+            in_target = 0
+        }
+        END { if (best_val != "") print best_val }
     ' "${WORK_DIR}/Packages"
 }
 
@@ -52,30 +61,43 @@ trap 'rm -rf "${WORK_DIR}"' EXIT
 mkdir -p "${OUTPUT_DIR}"
 
 # =============================================================================
-# 1. 下载软件包索引，解析内核版本
+# 1. 下载软件包索引
 # =============================================================================
 
 echo "  下载 Debian ${DEBIAN_SUITE} 软件包索引..." >&2
-PACKAGES_URL="${DEBIAN_MIRROR}/dists/${DEBIAN_SUITE}/main/binary-amd64/Packages.gz"
-retry "${RETRY_MAX}" "${RETRY_DELAY}" curl -sL "${PACKAGES_URL}" | gunzip > "${WORK_DIR}/Packages"
+> "${WORK_DIR}/Packages"
 
-# 从 linux-image-amd64 元包获取版本号
-META_VER=$(pkg_field "linux-image-amd64" "Version")
-if [[ -z "${META_VER}" ]]; then
-    echo "错误：无法获取 linux-image-amd64 版本" >&2; exit 1
+for dist in "${DEBIAN_SUITE}-updates" "${DEBIAN_SUITE}-security" "${DEBIAN_SUITE}"; do
+    URL="${DEBIAN_MIRROR}/dists/${dist}/main/binary-amd64/Packages.gz"
+    curl -sL "${URL}" 2>/dev/null | gunzip 2>/dev/null >> "${WORK_DIR}/Packages" || true
+done
+
+if [[ ! -s "${WORK_DIR}/Packages" ]]; then
+    echo "错误：软件包索引为空" >&2; exit 1
 fi
 
-# 内核 ABI 版本：去掉 Debian 修订号（+xxx），追加 -amd64
-KVER="$(echo "${META_VER}" | sed 's/+.*//')-amd64"
+# =============================================================================
+# 2. 解析内核版本
+# =============================================================================
+
+# 从元包的 Depends 字段获取实际签名内核包名
+KERN_DEP=$(pkg_field "linux-image-amd64" "Depends")
+KERN_PKG=$(echo "${KERN_DEP}" | grep -oP 'linux-image-\d+\.\d+\.\d+-\d+-amd64' | head -1)
+
+if [[ -z "${KERN_PKG}" ]]; then
+    echo "错误：无法从 linux-image-amd64 依赖中解析签名内核包名" >&2; exit 1
+fi
+
+KVER="${KERN_PKG#linux-image-}"
 echo "  内核版本：${KVER}" >&2
 
 # =============================================================================
-# 2. 下载签名内核
+# 3. 下载签名内核
 # =============================================================================
 
-KERN_PATH=$(pkg_field "linux-image-${KVER}" "Filename")
+KERN_PATH=$(pkg_field "${KERN_PKG}" "Filename")
 if [[ -z "${KERN_PATH}" ]]; then
-    echo "错误：找不到签名内核包 linux-image-${KVER}" >&2; exit 1
+    echo "错误：找不到签名内核包 ${KERN_PKG}" >&2; exit 1
 fi
 echo "  下载签名内核..." >&2
 retry "${RETRY_MAX}" "${RETRY_DELAY}" curl -fSL -o "${WORK_DIR}/kernel.deb" "${DEBIAN_MIRROR}/${KERN_PATH}"
@@ -84,7 +106,7 @@ dpkg-deb -x "${WORK_DIR}/kernel.deb" "${WORK_DIR}/kernel-extract"
 cp "${WORK_DIR}/kernel-extract/boot/vmlinuz-"* "${OUTPUT_DIR}/vmlinuz"
 
 # =============================================================================
-# 3. 下载内核模块
+# 4. 下载内核模块
 # =============================================================================
 
 MODS_PATH=$(pkg_field "linux-modules-${KVER}" "Filename")
@@ -116,7 +138,7 @@ done
 depmod -b "${WORK_DIR}/modules-all" "${KVER}"
 
 # =============================================================================
-# 4. 精简模块树
+# 5. 精简模块树
 # =============================================================================
 
 echo "  解析模块依赖..." >&2

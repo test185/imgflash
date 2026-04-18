@@ -202,9 +202,11 @@ echo "==== 第1步：下载组件 ===="
 DEBIAN_SUITE="${DEBIAN_SUITE:-trixie}"
 PKG_INDEX="${BUILD_DIR}/Packages"
 echo "  下载 Debian ${DEBIAN_SUITE} 软件包索引..."
-retry "${RETRY_MAX}" "${RETRY_DELAY}" curl -sL \
-    "${DEBIAN_MIRROR}/dists/${DEBIAN_SUITE}/main/binary-amd64/Packages.gz" \
-    | gunzip > "${PKG_INDEX}"
+> "${PKG_INDEX}"
+for dist in "${DEBIAN_SUITE}-updates" "${DEBIAN_SUITE}-security" "${DEBIAN_SUITE}"; do
+    curl -sL "${DEBIAN_MIRROR}/dists/${dist}/main/binary-amd64/Packages.gz" 2>/dev/null \
+        | gunzip 2>/dev/null >> "${PKG_INDEX}" || true
+done
 
 # --- 1b. Debian 签名内核 + 模块 ---
 echo "  提取 Debian 签名内核及模块..."
