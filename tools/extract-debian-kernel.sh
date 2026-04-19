@@ -82,7 +82,7 @@ fi
 
 # 从元包的 Depends 字段获取实际签名内核包名
 KERN_DEP=$(pkg_field "linux-image-amd64" "Depends")
-KERN_PKG=$(echo "${KERN_DEP}" | grep -oP 'linux-image-\d+\.\d+\.\d+-\d+-amd64' | head -1)
+KERN_PKG=$(echo "${KERN_DEP}" | grep -oP 'linux-image-\d+\.\d+\.\d+-\d+-amd64' | head -1 || true)
 
 if [[ -z "${KERN_PKG}" ]]; then
     echo "错误：无法从 linux-image-amd64 依赖中解析签名内核包名" >&2; exit 1
