@@ -2,10 +2,16 @@
 # =============================================================================
 # ImgFlash - 交互式磁盘镜像安装器
 # =============================================================================
-# 在 initramfs 中以 PID 1 运行，使用 BusyBox dd 写盘。
-# =============================================================================
 
 IMAGE_FILE="/image/image.img"
+DD_PID=""
+
+# Ctrl+C 清理后台 dd 进程
+trap 'echo ""; \
+      if [ -n "$DD_PID" ]; then \
+          kill -KILL $DD_PID 2>/dev/null; wait $DD_PID 2>/dev/null; DD_PID=""; \
+          echo "Aborted by user!"; echo "Returning to menu..."; \
+      fi' INT
 
 # ---------------------------------------------------------------------------
 # 磁盘枚举（通过 /sys/block，无需 lsblk）
@@ -25,9 +31,9 @@ get_size_human() {
     local sectors=$(cat "/sys/block/$1/size" 2>/dev/null)
     local mb=$((sectors / 2 / 1024))
     if [ $mb -ge 1024 ]; then
-        echo "$((mb / 1024)).$(( (mb % 1024) / 10 )) GB"
+        printf "%d.%02d GB" "$((mb / 1024))" "$(( (mb % 1024) * 100 / 1024 ))"
     else
-        echo "${mb} MB"
+        printf "%d MB" "$mb"
     fi
 }
 
@@ -89,24 +95,33 @@ confirm() {
 
     # 获取镜像大小
     local img_bytes=$(stat -c '%s' "$IMAGE_FILE" 2>/dev/null || echo 0)
+    local img_mb=$((img_bytes / 1048576))
     local img_size
-    if [ $img_bytes -ge 1073741824 ]; then
-        img_size="$((img_bytes / 1073741824)).$(( (img_bytes % 1073741824) * 10 / 1073741824 )) GB"
-    elif [ $img_bytes -ge 1048576 ]; then
-        img_size="$((img_bytes / 1048576)).$(( (img_bytes % 1048576) * 10 / 1048576 )) MB"
+    if [ $img_mb -ge 1024 ]; then
+        img_size=$(printf "%d.%02d GB" "$((img_mb / 1024))" "$(( (img_mb % 1024) * 100 / 1024 ))")
     else
-        img_size="$((img_bytes / 1024)) KB"
+        img_size=$(printf "%d MB" "$img_mb")
     fi
 
     local disk_size=$(get_size_human "$disk")
 
     echo ""
-    echo "!! DANGEROUS OPERATION CONFIRMATION !!"
-    echo "--------------------------------------"
+    echo "+>>>>>>>>>>>>>>>>>>>>>><<<<<<<<<<<<<<<<<<<<<<+"
+    echo ">>  !! DANGEROUS OPERATION CONFIRMATION !!  <<"
+    echo "+>>>>>>>>>>>>>>>>>>>>>><<<<<<<<<<<<<<<<<<<<<<+"
     echo "Target device: /dev/$disk ($disk_size)"
     echo "Image size: $img_size"
     echo "--------------------------------------"
     echo "This will ERASE ALL DATA on /dev/$disk!"
+
+    # 检查磁盘容量是否小于镜像
+    local disk_sectors=$(cat "/sys/block/$disk/size" 2>/dev/null || echo 0)
+    if [ $((disk_sectors / 2)) -lt $((img_bytes / 1024)) ]; then
+        echo ">> !! WARNING: Disk is smaller than image! Write will fail !! <<"
+        printf "Press Enter to return..."; read _
+        return 1
+    fi
+
     printf "Confirm write operation? (Type uppercase YES to proceed): "; read answer
 
     [ "$answer" = "YES" ]
@@ -130,29 +145,47 @@ do_install() {
 
     echo ""
     echo "Writing to $target ..."
-    echo "Please wait..."
 
     dd if="$IMAGE_FILE" of="$target" bs=4M conv=fsync &
-    local dd_pid=$!
-    local elapsed=0
+    DD_PID=$!
+    local start=$(date +%s)
+    local prev_written=0
 
-    while kill -0 $dd_pid 2>/dev/null; do
-        sleep 1
-        elapsed=$((elapsed + 1))
-        local written=$(cat /proc/$dd_pid/io 2>/dev/null | awk '/wchar/ {print $2}')
+    while kill -0 $DD_PID 2>/dev/null; do
+        sleep 0.5
+        local written=$(awk '/wchar/ {print $2}' /proc/$DD_PID/io 2>/dev/null)
+        local now=$(date +%s)
+        local elapsed=$((now - start))
+        [ $elapsed -lt 1 ] && elapsed=1
+
         if [ -n "$written" ] && [ "$written" -gt 0 ]; then
-            local written_mb=$((written / 1048576))
-            local pct=0
-            [ $total_mb -gt 0 ] && pct=$((written_mb * 100 / total_mb))
-            printf "\r  Progress: [%3d%%]  %d/%d MB  Elapsed: %02d:%02d  \033[K" \
-                "$pct" "$written_mb" "$total_mb" "$((elapsed / 60))" "$((elapsed % 60))"
+            local old_prev=$prev_written
+            prev_written=$written
+
+            local stats=$(awk -v wrk="$written" -v prev="$old_prev" -v tot="$total_bytes" -v dt="0.5" 'BEGIN {
+                pct = wrk * 10000 / tot
+                if (pct > 10000) pct = 10000
+                wmb = wrk / 1048576
+                spd = ((wrk - prev) / 1048576) / dt
+                printf "%.0f %.0f %.1f", pct, wmb, spd
+            }')
+            set -- $stats
+            local pct_hundredths=$1
+            local written_mb=$2
+            local speed_mb=$3
+
+            printf "\r  Progress: [%3d.%02d%%]  %d/%d MB  %.2f MB/s  Elapsed: %02d:%02d  \033[K" \
+                "$((pct_hundredths / 100))" "$((pct_hundredths % 100))" \
+                "$written_mb" "$total_mb" \
+                "$speed_mb" \
+                "$((elapsed / 60))" "$((elapsed % 60))"
         else
-            printf "\r  Elapsed: %02d:%02d  (reading stats...)" \
+            printf "\r  Elapsed: %02d:%02d  (reading stats...)  \033[K" \
                 "$((elapsed / 60))" "$((elapsed % 60))"
         fi
     done
 
-    wait $dd_pid
+    wait $DD_PID
     local dd_status=$?
 
     echo ""
