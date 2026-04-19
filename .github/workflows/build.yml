@@ -19,23 +19,19 @@ jobs:
       - name: "检出仓库"
         uses: actions/checkout@v4
 
-      - name: "安装构建依赖"
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            xorriso squashfs-tools mtools dosfstools syslinux-common isolinux \
-            curl make file cpio kmod \
-            xz-utils bzip2 p7zip-full unzip zstd \
-            debootstrap debian-archive-keyring
+      - name: "构建 Docker 镜像"
+        run: docker build -t imgflash .
 
       - name: "构建 ISO"
         run: |
-          chmod +x build.sh
+          mkdir -p output
           ARGS="-u ${{ github.event.inputs.download_url }}"
           if [ -n "${{ github.event.inputs.iso_name }}" ]; then
             ARGS="$ARGS -n ${{ github.event.inputs.iso_name }}"
           fi
-          sudo bash build.sh $ARGS
+          docker run --rm --privileged \
+            -v "$(pwd)/output":/build/output \
+            imgflash bash build.sh $ARGS
 
       - name: "上传 ISO 产物"
         uses: actions/upload-artifact@v4

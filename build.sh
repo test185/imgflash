@@ -45,22 +45,6 @@ ISO_DIR="${BUILD_DIR}/iso"
 OUTPUT_DIR="${SCRIPT_DIR}/output"
 
 # ---------------------------------------------------------------------------
-# Docker 重新执行（非 Debian 环境自动进入容器）
-# ---------------------------------------------------------------------------
-if ! grep -qiE 'debian|ubuntu' /etc/os-release 2>/dev/null; then
-    echo "检测到非 Debian 环境，正在通过 Docker 启动构建 ..."
-    exec docker run --rm --privileged \
-        -v "${SCRIPT_DIR}":/build -w /build \
-        debian:${DEBIAN_SUITE} \
-        bash -c "apt-get update && apt-get install -y \
-            debootstrap debian-archive-keyring \
-            gcc make curl file \
-            xorriso squashfs-tools mtools dosfstools syslinux-common isolinux \
-            xz-utils bzip2 p7zip-full unzip zstd cpio kmod \
-            && bash build.sh $*"
-fi
-
-# ---------------------------------------------------------------------------
 # 退出清理
 # ---------------------------------------------------------------------------
 BUILD_SUCCESS=0
@@ -194,7 +178,7 @@ fi
 # ---------------------------------------------------------------------------
 
 echo "==== 依赖检查 ===="
-REQUIRED_CMDS="debootstrap gcc curl tar xz zstd modprobe depmod mksquashfs xorriso mcopy mmd mkfs.vfat cpio file"
+REQUIRED_CMDS="debootstrap curl tar xz zstd modprobe depmod mksquashfs xorriso mcopy mmd mkfs.vfat cpio file"
 for cmd in ${REQUIRED_CMDS}; do
     if ! command -v "$cmd" &>/dev/null; then
         echo "错误：缺少必要命令 '$cmd'，请先安装" >&2; exit 1
