@@ -2,11 +2,10 @@
 # =============================================================================
 # ImgFlash - Interactive Disk Image Installer
 # =============================================================================
-# Runs as PID 1 inside initramfs. Uses static GNU dd for progress display.
+# Runs as PID 1 inside initramfs. Uses BusyBox dd with /proc progress.
 # =============================================================================
 
 IMAGE_FILE="/image/image.img"
-DD="/bin/dd"
 
 # ---------------------------------------------------------------------------
 # Disk enumeration via /sys/block (no lsblk needed)
@@ -123,17 +122,27 @@ do_install() {
 
     echo ""
     echo "Writing to /dev/$disk ..."
+    echo "Please wait..."
+
+    dd if="$IMAGE_FILE" of="/dev/$disk" bs=4M conv=fsync &
+    local dd_pid=$!
+    local elapsed=0
+
+    while kill -0 $dd_pid 2>/dev/null; do
+        sleep 1
+        elapsed=$((elapsed + 1))
+        printf "\r  Elapsed: %02d:%02d" "$((elapsed / 60))" "$((elapsed % 60))"
+    done
+
+    wait $dd_pid
+    local dd_status=$?
+
     echo ""
 
-    if "$DD" if="$IMAGE_FILE" of="/dev/$disk" bs=4M conv=fsync 2>&1; then
-        sync
-        echo ""
-        echo "Write complete. Syncing..."
-        sync
+    if [ $dd_status -eq 0 ]; then
         echo "Installation complete!"
         return 0
     else
-        echo ""
         echo "Installation failed!"
         return 1
     fi
