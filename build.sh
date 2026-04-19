@@ -309,7 +309,7 @@ chmod +x "${BUILD_DIR}/busybox"
 # --- 静态 GNU dd ---
 echo "  编译静态 GNU dd ..."
 COREUTILS_VERSION=$(curl -sL "https://ftp.gnu.org/gnu/coreutils/" \
-    | grep -oP 'href="coreutils-\K[\d.]+' \
+    | grep -oP 'href="coreutils-\K[0-9]+(?:\.[0-9]+)*(?=[.]tar)' \
     | sort -V | tail -1 || true)
 if [[ -z "${COREUTILS_VERSION}" ]]; then
     echo "错误：无法检测 coreutils 版本" >&2; exit 1
