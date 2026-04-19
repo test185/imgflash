@@ -28,7 +28,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEBIAN_MIRROR="${DEBIAN_MIRROR:-https://ftp.debian.org/debian}"
 DEBIAN_SUITE="${DEBIAN_SUITE:-trixie}"
 VOLUME_LABEL="${VOLUME_LABEL:-IMGFLASH}"
-REQUIRED_MODULES="${REQUIRED_MODULES:-squashfs isofs loop nls_cp437 nls_ascii ahci nvme xhci-hcd ehci-hcd usb-storage uas sr_mod sd_mod cdrom virtio_blk virtio_pci}"
+REQUIRED_MODULES="${REQUIRED_MODULES:-squashfs isofs loop \
+    nls_cp437 nls_ascii nls_utf8 \
+    ahci ata_piix ata_generic \
+    nvme \
+    xhci-hcd ehci-hcd usb-storage uas \
+    sr_mod sd_mod cdrom \
+    hid usbhid \
+    virtio virtio_blk virtio_pci virtio_scsi}"
 SCAN_TIMEOUT="${SCAN_TIMEOUT:-10}"
 
 ISOLINUX_BIN=$(find /usr -name isolinux.bin 2>/dev/null | head -1)
@@ -309,6 +316,8 @@ ln -s busybox "${INITRAMFS_DIR}/bin/sh"
 # /init 和 /usr/bin/installer
 cp "${SCRIPT_DIR}/scripts/init.sh" "${INITRAMFS_DIR}/init"
 chmod +x "${INITRAMFS_DIR}/init"
+
+echo "${REQUIRED_MODULES}" | tr ' ' '\n' > "${INITRAMFS_DIR}/etc/modules"
 
 sed -i "s/TRIES -lt 10/TRIES -lt ${SCAN_TIMEOUT}/" "${INITRAMFS_DIR}/init"
 sed -i "s/after 10 seconds/after ${SCAN_TIMEOUT} seconds/" "${INITRAMFS_DIR}/init"
