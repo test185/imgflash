@@ -349,7 +349,7 @@ fi
 
 # 解压压缩模块为 .ko（BusyBox modprobe 不支持压缩模块）
 echo "  正在解压模块（压缩格式 → .ko）..."
-find "${MOD_SRC}" -name '*.ko.xz' -exec xz -rm -q {} +
+find "${MOD_SRC}" -name '*.ko.xz' -exec xz -d -q {} +
 
 # 用 modprobe 解析所需模块及依赖
 echo "  正在解析模块依赖链 ..."
