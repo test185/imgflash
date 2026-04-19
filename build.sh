@@ -322,7 +322,7 @@ CU_DIR="${BUILD_DIR}/coreutils-${COREUTILS_VERSION}"
 retry 3 5 curl -fSL "$CU_URL" | tar -xJ -C "${BUILD_DIR}"
 cd "${CU_DIR}"
 FORCE_UNSAFE_CONFIGURE=1 ./configure LDFLAGS="-static" --disable-nls 2>&1 | tail -5
-make -j"$(nproc)" dd V=0
+make -j"$(nproc)" src/dd V=0
 cp src/dd "${BUILD_DIR}/gnu-dd"
 cd "${SCRIPT_DIR}"
 chmod +x "${BUILD_DIR}/gnu-dd"
