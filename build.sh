@@ -326,6 +326,9 @@ mkdir -p "${INITRAMFS_DIR}"/{dev/pts,dev/shm}
 cp "${BUILD_DIR}/busybox" "${INITRAMFS_DIR}/bin/busybox"
 chmod +x "${INITRAMFS_DIR}/bin/busybox"
 
+# 创建 /bin/sh 符号链接
+ln -s busybox "${INITRAMFS_DIR}/bin/sh"
+
 # /init 和 /usr/bin/installer
 cp "${SCRIPT_DIR}/scripts/init.sh" "${INITRAMFS_DIR}/init"
 chmod +x "${INITRAMFS_DIR}/init"
