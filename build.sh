@@ -347,7 +347,11 @@ if [[ ! -d "${MOD_SRC}" ]]; then
     echo "错误：找不到内核模块目录 ${MOD_SRC}" >&2; exit 1
 fi
 
-# 先解析依赖（.ko.zst 文件完好时 modules.dep 才正确）
+# 解压压缩模块为 .ko（BusyBox modprobe 不支持压缩模块）
+echo "  正在解压模块（压缩格式 → .ko）..."
+find "${MOD_SRC}" -name '*.ko.xz' -exec xz -rm -q {} +
+
+# 用 modprobe 解析所需模块及依赖
 echo "  正在解析模块依赖链 ..."
 NEEDED_FILES=""
 for mod in ${REQUIRED_MODULES}; do
@@ -355,17 +359,16 @@ for mod in ${REQUIRED_MODULES}; do
         | awk '/^insmod/ {print $2}')
     NEEDED_FILES="${NEEDED_FILES} ${deps}"
 done
-NEEDED_FILES=$(echo "$NEEDED_FILES" | tr ' ' '\n' | sort -u | grep -v '^$')
+NEEDED_FILES=$(echo "$NEEDED_FILES" | tr ' ' '\n' | sort -u | grep .)
 
 if [[ -z "$NEEDED_FILES" ]]; then
     echo "错误：modprobe 未能解析任何模块依赖，构建环境异常" >&2; exit 1
 fi
 
 MOD_DEST="${INITRAMFS_DIR}/lib/modules/${KVER}"
-mkdir -p "${MOD_DEST}"
 echo "  包含 $(echo "$NEEDED_FILES" | wc -l) 个模块（含依赖）"
 
-# 拷贝 .ko.zst 模块到 initramfs
+# 拷贝所需模块到 initramfs
 for mod_file in $NEEDED_FILES; do
     rel_path=$(echo "$mod_file" | sed "s|${MOD_SRC}/||")
     dest_dir="${MOD_DEST}/$(dirname "$rel_path")"
@@ -378,11 +381,6 @@ for f in modules.builtin modules.builtin.modinfo modules.order; do
     [ -f "${MOD_SRC}/$f" ] && cp "${MOD_SRC}/$f" "${MOD_DEST}/"
 done
 
-# 在 initramfs 内解压 .ko.zst → .ko（BusyBox modprobe 不支持压缩模块）
-echo "  正在为 BusyBox 解压模块 (.ko.zst → .ko) ..."
-find "${MOD_DEST}" -name '*.ko.zst' -exec zstd -rm -q {} +
-
-# 解压后重建依赖索引
 depmod -b "${INITRAMFS_DIR}" "${KVER}"
 
 MOD_COUNT=$(find "${INITRAMFS_DIR}/lib/modules" -name '*.ko' | wc -l)

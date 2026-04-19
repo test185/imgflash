@@ -18,7 +18,7 @@ emergency_shell() {
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 
 # --- Mount virtual filesystems ---
-mkdir -p /proc /sys /dev /run /tmp
+mkdir -p /proc /sys /dev /run /tmp /media/cdrom /image
 
 mount -t proc -o noexec,nosuid,nodev proc /proc
 mount -t sysfs -o noexec,nosuid,nodev sysfs /sys
@@ -32,8 +32,6 @@ mount -t tmpfs -o nodev,nosuid,noexec shm /dev/shm
 
 [ -c /dev/null ] || mknod -m 666 /dev/null c 1 3
 [ -c /dev/kmsg ] || mknod -m 660 /dev/kmsg c 1 11
-
-mkdir -p /media/cdrom /image
 
 ln -sf /proc/mounts /etc/mtab
 
