@@ -24,12 +24,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             xorriso squashfs-tools mtools dosfstools syslinux-common isolinux \
-            curl dpkg kmod gcc make file \
-            xz-utils bzip2 p7zip-full unzip zstd
+            curl gcc make file \
+            xz-utils bzip2 p7zip-full unzip zstd \
+            debootstrap debian-archive-keyring
 
       - name: "构建 ISO"
         run: |
-          chmod +x build.sh tools/extract-debian-kernel.sh
+          chmod +x build.sh
           ARGS="-u ${{ github.event.inputs.download_url }}"
           if [ -n "${{ github.event.inputs.iso_name }}" ]; then
             ARGS="$ARGS -n ${{ github.event.inputs.iso_name }}"

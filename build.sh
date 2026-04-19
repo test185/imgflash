@@ -18,10 +18,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # 默认配置（可通过环境变量覆盖）
 # ---------------------------------------------------------------------------
 DEBIAN_MIRROR="${DEBIAN_MIRROR:-https://ftp.debian.org/debian}"
+DEBIAN_SUITE="${DEBIAN_SUITE:-trixie}"
 VOLUME_LABEL="${VOLUME_LABEL:-IMGFLASH}"
 REQUIRED_MODULES="${REQUIRED_MODULES:-squashfs isofs loop ahci nvme usb-storage sr_mod sd_mod cdrom virtio_blk virtio_pci}"
-RETRY_MAX="${RETRY_MAX:-3}"
-RETRY_DELAY="${RETRY_DELAY:-5}"
 SCAN_TIMEOUT="${SCAN_TIMEOUT:-10}"
 
 SYSLINUX_DIR="/usr/share/syslinux"
@@ -31,10 +30,9 @@ ISOHDPFX_PATH="${SYSLINUX_DIR}/isohdpfx.bin"
 # 构建目录
 # ---------------------------------------------------------------------------
 BUILD_DIR="${SCRIPT_DIR}/build"
-DL_DIR="${BUILD_DIR}/dl"
+DEBOOTSTRAP_DIR="${BUILD_DIR}/debootstrap"
 INITRAMFS_DIR="${BUILD_DIR}/initramfs"
 ISO_DIR="${BUILD_DIR}/iso"
-KERN_DIR="${BUILD_DIR}/kernel"
 OUTPUT_DIR="${SCRIPT_DIR}/output"
 
 # ---------------------------------------------------------------------------
@@ -81,39 +79,14 @@ fi
 # 辅助函数
 # ---------------------------------------------------------------------------
 
-retry() {
-    local max="${1}" delay="${2}"
-    shift 2
-    for i in $(seq 1 "$max"); do
-        if "$@"; then return 0; fi
-        [[ $i -eq $max ]] && { echo "错误：重试 $max 次后仍失败：$*" >&2; return 1; }
-        echo "  第 $i/$max 次重试，${delay} 秒后..." >&2
-        sleep "$delay"
-    done
-}
-
-# 从 Packages 索引中提取指定包的指定字段
-pkg_field() {
-    local pkg="$1" field="$2"
-    awk -v pkg="$pkg" -v field="$field" '
-        /^Package: / { cur_pkg = $2 }
-        cur_pkg == pkg && index($0, field ": ") == 1 { print substr($0, length(field) + 3); exit }
-    ' "${PKG_INDEX}"
-}
-
-find_latest_deb() {
-    local url="$1" pattern="$2"
-    curl -sL "$url" | tr '"' '\n' | grep -E "$pattern" | sort -V | tail -1
-}
-
 download_image() {
     local url="$1"
 
     echo "  正在下载：${url}"
-    retry 3 5 curl -k -L -o "${DL_DIR}/downloaded_file" "$url"
+    curl -k -L -o "${BUILD_DIR}/downloaded_file" "$url"
 
     local file_type
-    file_type=$(file --mime-type -b "${DL_DIR}/downloaded_file")
+    file_type=$(file --mime-type -b "${BUILD_DIR}/downloaded_file")
     echo "  文件类型：${file_type}"
 
     local extracted_name=""
@@ -121,40 +94,38 @@ download_image() {
     case "${file_type}" in
         application/gzip)
             extracted_name=$(basename "$url" | sed 's/\.gz$//')
-            gunzip -c "${DL_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
+            gunzip -c "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
             ;;
         application/x-xz)
             extracted_name=$(basename "$url" | sed 's/\.xz$//')
-            xz -dc "${DL_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
+            xz -dc "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
             ;;
         application/x-bzip2)
             extracted_name=$(basename "$url" | sed 's/\.bz2$//')
-            bzip2 -dc "${DL_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
+            bzip2 -dc "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
             ;;
         application/zip)
-            unzip -j -o "${DL_DIR}/downloaded_file" -d "${BUILD_DIR}/"
+            unzip -j -o "${BUILD_DIR}/downloaded_file" -d "${BUILD_DIR}/"
             extracted_name=$(ls "${BUILD_DIR}"/*.img 2>/dev/null | head -n1 | xargs basename)
             ;;
         application/x-7z-compressed)
-            7z x "${DL_DIR}/downloaded_file" -o"${BUILD_DIR}/"
+            7z x "${BUILD_DIR}/downloaded_file" -o"${BUILD_DIR}/"
             extracted_name=$(ls "${BUILD_DIR}"/*.img 2>/dev/null | head -n1 | xargs basename)
             ;;
         *)
             extracted_name=$(basename "$url")
-            mv "${DL_DIR}/downloaded_file" "${BUILD_DIR}/${extracted_name}"
+            mv "${BUILD_DIR}/downloaded_file" "${BUILD_DIR}/${extracted_name}"
             ;;
     esac
 
-    rm -f "${DL_DIR}/downloaded_file"
+    rm -f "${BUILD_DIR}/downloaded_file"
 
     if [[ -z "${extracted_name}" || ! -f "${BUILD_DIR}/${extracted_name}" ]]; then
         echo "错误：未找到解压后的镜像文件！" >&2; exit 1
     fi
 
-    # 统一重命名为 temp.img
     mv "${BUILD_DIR}/${extracted_name}" "${BUILD_DIR}/temp.img"
 
-    # 推导默认 ISO 名称
     if [[ -z "${ISO_NAME}" ]]; then
         ISO_NAME=$(basename "${extracted_name}" .img)
     fi
@@ -163,7 +134,7 @@ download_image() {
 # ---------------------------------------------------------------------------
 # 确定输入镜像
 # ---------------------------------------------------------------------------
-mkdir -p "${BUILD_DIR}" "${OUTPUT_DIR}" "${DL_DIR}" "${KERN_DIR}"
+mkdir -p "${BUILD_DIR}" "${OUTPUT_DIR}"
 
 if [[ -n "${IMAGE_URL}" ]]; then
     download_image "${IMAGE_URL}"
@@ -187,77 +158,75 @@ echo ""
 echo "=========================================="
 echo "  ImgFlash - ISO 构建器"
 echo "=========================================="
+echo "  Debian 套件 : ${DEBIAN_SUITE}"
 echo "  Debian 镜像 : ${DEBIAN_MIRROR}"
 echo "  输出名称    : ${ISO_NAME}"
 echo "=========================================="
 echo ""
 
 # =============================================================================
-# 第1步：下载并提取外部组件
+# 第1步：debootstrap 最小 Debian 环境
 # =============================================================================
 
-echo "==== 第1步：下载组件 ===="
+echo "==== 第1步：debootstrap ${DEBIAN_SUITE} ===="
 
-# --- 1a. 下载 Debian 软件包索引 ---
-DEBIAN_SUITE="${DEBIAN_SUITE:-trixie}"
-PKG_INDEX="${BUILD_DIR}/Packages"
-echo "  下载 Debian ${DEBIAN_SUITE} 软件包索引..."
-> "${PKG_INDEX}"
-for dist in "${DEBIAN_SUITE}-updates" "${DEBIAN_SUITE}-security" "${DEBIAN_SUITE}"; do
-    curl -sL "${DEBIAN_MIRROR}/dists/${dist}/main/binary-amd64/Packages.gz" 2>/dev/null \
-        | gunzip 2>/dev/null >> "${PKG_INDEX}" || true
-done
+if ! command -v debootstrap &>/dev/null; then
+    echo "错误：需要 debootstrap，请安装后重试" >&2; exit 1
+fi
 
-# --- 1b. Debian 签名内核 + 模块 ---
-echo "  提取 Debian 签名内核及模块..."
-KVER=$("${SCRIPT_DIR}/tools/extract-debian-kernel.sh" -o "${KERN_DIR}" -m "${REQUIRED_MODULES}")
+rm -rf "${DEBOOTSTRAP_DIR}"
+debootstrap --variant=minbase \
+    --include=linux-image-amd64,shim-signed,grub-efi-amd64-signed \
+    "${DEBIAN_SUITE}" "${DEBOOTSTRAP_DIR}" "${DEBIAN_MIRROR}"
+
+echo "  debootstrap 完成"
+
+# =============================================================================
+# 第2步：从 debootstrap 环境提取所需文件
+# =============================================================================
+
+echo "==== 第2步：提取组件 ===="
+
+# --- 2a. 签名内核 ---
+VMLINUZ=$(ls "${DEBOOTSTRAP_DIR}"/boot/vmlinuz-* 2>/dev/null | head -1)
+if [[ -z "${VMLINUZ}" ]]; then
+    echo "错误：debootstrap 环境中未找到 vmlinuz" >&2; exit 1
+fi
+KVER=$(basename "${VMLINUZ}" | sed 's/^vmlinuz-//')
 echo "  内核版本：${KVER}"
+echo "  vmlinuz：${VMLINUZ}"
 
-# --- 1c. Debian shim + 签名 GRUB（从同一索引查找）---
-echo "  下载 Debian shim..."
-SHIM_PATH=$(pkg_field "shim-signed" "Filename")
-if [[ -z "${SHIM_PATH}" ]]; then
-    echo "错误：找不到 shim-signed 包" >&2; exit 1
+# --- 2b. shim + 签名 GRUB ---
+SHIM_SRC=$(find "${DEBOOTSTRAP_DIR}" -name 'shimx64.efi.signed' 2>/dev/null | head -1)
+GRUB_SRC=$(find "${DEBOOTSTRAP_DIR}" -name 'grubx64.efi.signed' 2>/dev/null | head -1)
+if [[ -z "${SHIM_SRC}" || -z "${GRUB_SRC}" ]]; then
+    echo "错误：debootstrap 环境中未找到 shim 或 GRUB" >&2; exit 1
 fi
-echo "    $(basename "${SHIM_PATH}")"
-retry "${RETRY_MAX}" "${RETRY_DELAY}" curl -fSL -o "${DL_DIR}/shim.deb" "${DEBIAN_MIRROR}/${SHIM_PATH}"
+echo "  shim：${SHIM_SRC}"
+echo "  GRUB：${GRUB_SRC}"
 
-echo "  下载 Debian 签名 GRUB..."
-GRUB_PATH=$(pkg_field "grub-efi-amd64-signed" "Filename")
-if [[ -z "${GRUB_PATH}" ]]; then
-    echo "错误：找不到 grub-efi-amd64-signed 包" >&2; exit 1
-fi
-echo "    $(basename "${GRUB_PATH}")"
-retry "${RETRY_MAX}" "${RETRY_DELAY}" curl -fSL -o "${DL_DIR}/grub.deb" "${DEBIAN_MIRROR}/${GRUB_PATH}"
-
-# --- 1c. BusyBox 静态二进制（动态解析最新版本）---
+# --- 2c. BusyBox ---
 echo "  检测最新 BusyBox 版本..."
 BUSYBOX_VERSION=$(curl -sL "https://busybox.net/downloads/binaries/" \
     | grep -oP '\d+\.\d+\.\d+(?=-x86_64-linux-musl)' \
-    | sort -V | tail -1)
+    | sort -V | tail -1 || true)
 if [[ -z "${BUSYBOX_VERSION}" ]]; then
     echo "错误：无法检测 BusyBox 版本" >&2; exit 1
 fi
 echo "    BusyBox ${BUSYBOX_VERSION}"
 BUSYBOX_URL="https://busybox.net/downloads/binaries/${BUSYBOX_VERSION}-x86_64-linux-musl/busybox"
-retry "${RETRY_MAX}" "${RETRY_DELAY}" curl -fSL -o "${DL_DIR}/busybox" "${BUSYBOX_URL}"
-chmod +x "${DL_DIR}/busybox"
+curl -fSL -o "${BUILD_DIR}/busybox" "${BUSYBOX_URL}"
+chmod +x "${BUILD_DIR}/busybox"
 
-# =============================================================================
-# 第2步：编译静态 GNU dd
-# =============================================================================
-
-echo "==== 第2步：编译静态 GNU dd ===="
-
+# --- 2d. 编译静态 GNU dd ---
+echo "  编译静态 GNU dd..."
 if ! command -v gcc &>/dev/null; then
     echo "错误：编译静态 dd 需要 gcc" >&2; exit 1
 fi
 
-# 动态解析最新 coreutils 版本
-echo "  检测最新 coreutils 版本..."
 COREUTILS_VERSION=$(curl -sL "https://ftp.gnu.org/gnu/coreutils/" \
     | grep -oP 'href="coreutils-\K[\d.]+' \
-    | sort -V | tail -1)
+    | sort -V | tail -1 || true)
 if [[ -z "${COREUTILS_VERSION}" ]]; then
     echo "错误：无法检测 coreutils 版本" >&2; exit 1
 fi
@@ -266,21 +235,14 @@ echo "    coreutils ${COREUTILS_VERSION}"
 CU_URL="https://ftp.gnu.org/gnu/coreutils/coreutils-${COREUTILS_VERSION}.tar.xz"
 CU_DIR="${BUILD_DIR}/coreutils-${COREUTILS_VERSION}"
 
-echo "  下载 coreutils ${COREUTILS_VERSION}..."
-retry "${RETRY_MAX}" "${RETRY_DELAY}" curl -fSL "$CU_URL" | tar -xJ -C "${BUILD_DIR}"
-
-echo "  配置..."
+curl -fSL "$CU_URL" | tar -xJ -C "${BUILD_DIR}"
 cd "${CU_DIR}"
 ./configure LDFLAGS="-static" --disable-nls --quiet 2>/dev/null
-
-echo "  编译 dd..."
 make -j"$(nproc)" dd --quiet V=0 2>/dev/null
-
-cp src/dd "${DL_DIR}/gnu-dd"
+cp src/dd "${BUILD_DIR}/gnu-dd"
 cd "${SCRIPT_DIR}"
-
-chmod +x "${DL_DIR}/gnu-dd"
-echo "  静态 dd 就绪：$(ls -lh "${DL_DIR}/gnu-dd" | awk '{print $5}')"
+chmod +x "${BUILD_DIR}/gnu-dd"
+echo "  静态 dd 就绪：$(ls -lh "${BUILD_DIR}/gnu-dd" | awk '{print $5}')"
 
 # =============================================================================
 # 第3步：组装 initramfs
@@ -296,29 +258,64 @@ mkdir -p "${INITRAMFS_DIR}"/{media/cdrom,image,var/log,root}
 mkdir -p "${INITRAMFS_DIR}"/{dev/pts,dev/shm}
 
 # --- 3b. 安装 BusyBox ---
-cp "${DL_DIR}/busybox" "${INITRAMFS_DIR}/bin/busybox"
+cp "${BUILD_DIR}/busybox" "${INITRAMFS_DIR}/bin/busybox"
 chmod +x "${INITRAMFS_DIR}/bin/busybox"
 
-# 注意：不预先创建符号链接。/init 启动时运行 /bin/busybox --install -s 创建全部链接。
-
 # --- 3c. 安装静态 GNU dd（存为 gnu-dd，init.sh 启动时覆盖 /bin/dd）---
-cp "${DL_DIR}/gnu-dd" "${INITRAMFS_DIR}/bin/gnu-dd"
+cp "${BUILD_DIR}/gnu-dd" "${INITRAMFS_DIR}/bin/gnu-dd"
 chmod +x "${INITRAMFS_DIR}/bin/gnu-dd"
 
 # --- 3d. 安装 /init 和 /usr/bin/installer ---
 cp "${SCRIPT_DIR}/scripts/init.sh" "${INITRAMFS_DIR}/init"
 chmod +x "${INITRAMFS_DIR}/init"
 
-# 将 SCAN_TIMEOUT 注入 /init
 sed -i "s/TRIES -lt 10/TRIES -lt ${SCAN_TIMEOUT}/" "${INITRAMFS_DIR}/init"
 sed -i "s/after 10 seconds/after ${SCAN_TIMEOUT} seconds/" "${INITRAMFS_DIR}/init"
 
 cp "${SCRIPT_DIR}/scripts/installer.sh" "${INITRAMFS_DIR}/usr/bin/installer"
 chmod +x "${INITRAMFS_DIR}/usr/bin/installer"
 
-# --- 3e. 安装内核模块（来自 extract-debian-kernel 输出）---
-echo "  安装内核模块..."
-cp -a "${KERN_DIR}/lib" "${INITRAMFS_DIR}/"
+# --- 3e. 安装内核模块（精简）---
+echo "  精简内核模块..."
+
+MOD_SRC="${DEBOOTSTRAP_DIR}/lib/modules/${KVER}"
+if [[ ! -d "${MOD_SRC}" ]]; then
+    echo "错误：找不到内核模块目录 ${MOD_SRC}" >&2; exit 1
+fi
+
+# 解压 .ko.zst 为 .ko（BusyBox modprobe 不支持压缩模块）
+for f in $(find "${MOD_SRC}" -name '*.ko.zst'); do
+    zstd -d -f "$f" -o "${f%.zst}" && rm "$f"
+done
+
+# 用 modprobe 解析所需模块及依赖
+NEEDED_FILES=""
+for mod in ${REQUIRED_MODULES}; do
+    deps=$(modprobe -d "${DEBOOTSTRAP_DIR}" -S "${KVER}" --show-depends "$mod" 2>/dev/null \
+        | awk '/^insmod/ {print $2}')
+    NEEDED_FILES="${NEEDED_FILES} ${deps}"
+done
+NEEDED_FILES=$(echo "$NEEDED_FILES" | tr ' ' '\n' | sort -u | grep -v '^$')
+
+MOD_DEST="${INITRAMFS_DIR}/lib/modules/${KVER}"
+
+if [[ -z "$NEEDED_FILES" ]]; then
+    echo "错误：modprobe 未能解析任何模块依赖，构建环境异常" >&2; exit 1
+else
+    echo "  包含 $(echo "$NEEDED_FILES" | wc -l) 个模块（含依赖）"
+    for mod_file in $NEEDED_FILES; do
+        rel_path=$(echo "$mod_file" | sed "s|${MOD_SRC}/||")
+        dest_dir="${MOD_DEST}/$(dirname "$rel_path")"
+        mkdir -p "$dest_dir"
+        cp "$mod_file" "$dest_dir/"
+    done
+
+    for f in modules.builtin modules.builtin.modinfo modules.order; do
+        [ -f "${MOD_SRC}/$f" ] && cp "${MOD_SRC}/$f" "${MOD_DEST}/"
+    done
+fi
+
+depmod -b "${INITRAMFS_DIR}" "${KVER}"
 
 MOD_COUNT=$(find "${INITRAMFS_DIR}/lib/modules" -name '*.ko*' | wc -l)
 MOD_SIZE=$(du -sh "${INITRAMFS_DIR}/lib/modules" | awk '{print $1}')
@@ -327,7 +324,7 @@ echo "  模块：${MOD_COUNT} 个文件，${MOD_SIZE}"
 # --- 3f. 打包 cpio 归档 ---
 echo "  创建 initramfs 归档..."
 cd "${INITRAMFS_DIR}"
-find . -print0 | cpio --null -o -H newc 2>/dev/null | gzip -9 > "${BUILD_DIR}/initrd.img"
+find . -print0 | cpio --null -o -H newc --owner root:root 2>/dev/null | gzip -9 > "${BUILD_DIR}/initrd.img"
 cd "${SCRIPT_DIR}"
 
 INITRD_SIZE=$(ls -lh "${BUILD_DIR}/initrd.img" | awk '{print $5}')
@@ -342,14 +339,12 @@ echo "==== 第4步：打包镜像容器 ===="
 IMAGE_DIR="${BUILD_DIR}/image"
 mkdir -p "${IMAGE_DIR}"
 
-# 输入镜像已在前面统一为 ${BUILD_DIR}/temp.img
 cp "${BUILD_DIR}/temp.img" "${IMAGE_DIR}/image.img"
 rm -f "${BUILD_DIR}/temp.img"
 
 IMG_SIZE=$(ls -lh "${IMAGE_DIR}/image.img" | awk '{print $5}')
 echo "  原始镜像大小：${IMG_SIZE}"
 
-# --- 创建 squashfs ---
 echo "  创建 squashfs..."
 mksquashfs "${IMAGE_DIR}" "${BUILD_DIR}/image.squashfs" \
     -comp xz -no-progress -no-xattrs
@@ -365,7 +360,7 @@ echo "==== 第5步：组装 ISO 结构 ===="
 
 # --- 5a. 内核和 initramfs ---
 mkdir -p "${ISO_DIR}/boot"
-cp "${KERN_DIR}/vmlinuz" "${ISO_DIR}/boot/vmlinuz"
+cp "${VMLINUZ}" "${ISO_DIR}/boot/vmlinuz"
 cp "${BUILD_DIR}/initrd.img" "${ISO_DIR}/boot/initrd.img"
 
 # --- 5b. 镜像 squashfs ---
@@ -396,18 +391,11 @@ EOF
 # --- 5d. EFI 启动（Secure Boot 链：shim → GRUB → 内核）---
 mkdir -p "${ISO_DIR}/EFI/BOOT"
 
-# 提取 shim
-dpkg-deb -x "${DL_DIR}/shim.deb" "${BUILD_DIR}/shim-extract"
-cp "${BUILD_DIR}/shim-extract/usr/lib/shim/shimx64.efi.signed" \
-   "${ISO_DIR}/EFI/BOOT/BOOTX64.EFI"
+cp "${SHIM_SRC}" "${ISO_DIR}/EFI/BOOT/BOOTX64.EFI"
+cp "${GRUB_SRC}" "${ISO_DIR}/EFI/BOOT/grubx64.efi"
 
-# 提取签名 GRUB
-dpkg-deb -x "${DL_DIR}/grub.deb" "${BUILD_DIR}/grub-extract"
-cp "${BUILD_DIR}/grub-extract/usr/lib/grub/x86_64-efi-signed/grubx64.efi.signed" \
-   "${ISO_DIR}/EFI/BOOT/grubx64.efi"
-
-# GRUB 配置
 cat > "${ISO_DIR}/EFI/BOOT/grub.cfg" << 'EOF'
+search --no-floppy --label --set=root IMGFLASH
 set timeout=3
 set default=0
 
@@ -420,7 +408,7 @@ EOF
 # --- 5e. 创建 FAT EFI 启动镜像 ---
 mkdir -p "${ISO_DIR}/boot/grub"
 
-dd if=/dev/zero of="${ISO_DIR}/boot/grub/efi.img" bs=1M count=4 2>/dev/null
+dd if=/dev/zero of="${ISO_DIR}/boot/grub/efi.img" bs=1M count=16 2>/dev/null
 mkfs.vfat -F 12 "${ISO_DIR}/boot/grub/efi.img" 2>/dev/null || \
     mkfs.vfat -F 16 "${ISO_DIR}/boot/grub/efi.img" 2>/dev/null || \
     mkfs.vfat -F 32 "${ISO_DIR}/boot/grub/efi.img" 2>/dev/null
