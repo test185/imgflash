@@ -19,12 +19,17 @@ jobs:
       - name: "检出仓库"
         uses: actions/checkout@v4
 
-      - name: "安装构建依赖"
+      - name: "设置 GCC"
+        uses: egor-tensin/setup-gcc@v2
+        with:
+          version: latest
+
+      - name: "安装 ISO 构建工具"
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             xorriso squashfs-tools mtools dosfstools syslinux-common isolinux \
-            curl gcc make file cpio kmod \
+            curl make file cpio kmod \
             xz-utils bzip2 p7zip-full unzip zstd \
             debootstrap debian-archive-keyring
 

@@ -308,6 +308,10 @@ chmod +x "${BUILD_DIR}/busybox"
 
 # --- 静态 GNU dd ---
 echo "  编译静态 GNU dd ..."
+
+GCC_VERSION=$(gcc -dumpversion)
+echo "    使用 GCC ${GCC_VERSION}"
+
 COREUTILS_VERSION=$(curl -sL "https://ftp.gnu.org/gnu/coreutils/" \
     | grep -oP 'href="coreutils-\K[0-9]+(?:\.[0-9]+)*(?=[.]tar)' \
     | sort -V | tail -1 || true)
