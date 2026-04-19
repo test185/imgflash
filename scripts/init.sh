@@ -62,7 +62,7 @@ echo "Scanning for boot media..."
 BOOT_DEV=""
 TRIES=0
 while [ $TRIES -lt 10 ]; do
-    for dev in /dev/sr* /dev/sd* /dev/nvme*; do
+    for dev in /dev/sr* /dev/sd* /dev/nvme* /dev/vd*; do
         [ -b "$dev" ] || continue
         if mount -t iso9660 -o ro "$dev" /media/cdrom 2>/dev/null; then
             if [ -f /media/cdrom/image.squashfs ]; then
@@ -86,7 +86,9 @@ mount -t squashfs -o ro,loop /media/cdrom/image.squashfs /image \
 
 [ -f /image/image.img ] || emergency_shell "image.img not found in squashfs"
 
-# --- Hand off to installer (becomes PID 1) ---
+# --- Launch installer as child process (keep PID 1 for signal handling) ---
 echo "Starting installer..."
-exec /usr/bin/installer
-emergency_shell "Failed to start installer"
+/usr/bin/installer
+
+# Installer exited - drop to shell
+emergency_shell "Installer exited"
