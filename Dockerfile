@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y \
     curl file \
     xorriso squashfs-tools mtools dosfstools syslinux-common isolinux \
     xz-utils bzip2 p7zip-full unzip zstd cpio kmod \
-    busybox \
+    busybox-static \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build

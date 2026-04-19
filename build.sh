@@ -278,18 +278,11 @@ if [[ -z "${SHIM_SRC}" || -z "${GRUB_SRC}" ]]; then
     echo "错误：debootstrap 环境中未找到 shim 或 GRUB" >&2; exit 1
 fi
 
-# --- BusyBox ---
-echo "  下载 BusyBox ..."
-BUSYBOX_VERSION=$(curl -sL "https://busybox.net/downloads/binaries/" \
-    | grep -oP '\d+\.\d+\.\d+(?=-x86_64-linux-musl)' \
-    | sort -V | tail -1 || true)
-if [[ -z "${BUSYBOX_VERSION}" ]]; then
-    echo "错误：无法检测 BusyBox 版本" >&2; exit 1
+# --- BusyBox（来自 busybox-static 包，静态链接） ---
+if ! command -v busybox &>/dev/null; then
+    echo "错误：未找到 busybox，请安装 busybox-static 包" >&2; exit 1
 fi
-echo "    BusyBox ${BUSYBOX_VERSION}"
-BUSYBOX_URL="https://busybox.net/downloads/binaries/${BUSYBOX_VERSION}-x86_64-linux-musl/busybox"
-retry 3 5 curl -fSL -o "${BUILD_DIR}/busybox" "${BUSYBOX_URL}"
-chmod +x "${BUILD_DIR}/busybox"
+echo "  BusyBox $(busybox --help 2>&1 | head -1 | awk '{print $NF}')"
 
 echo "  Phase 2 完成。"
 
@@ -307,7 +300,7 @@ mkdir -p "${INITRAMFS_DIR}"/{media/cdrom,image,var/log,root}
 mkdir -p "${INITRAMFS_DIR}"/{dev/pts,dev/shm}
 
 # BusyBox
-cp "${BUILD_DIR}/busybox" "${INITRAMFS_DIR}/bin/busybox"
+cp /bin/busybox "${INITRAMFS_DIR}/bin/busybox"
 chmod +x "${INITRAMFS_DIR}/bin/busybox"
 
 # 创建 /bin/sh 符号链接（内核执行 /init 时需要解释器）
