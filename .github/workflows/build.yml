@@ -30,8 +30,8 @@ jobs:
             ARGS="$ARGS -n ${{ github.event.inputs.iso_name }}"
           fi
           docker run --rm --privileged \
-            -v "$(pwd)/output":/build/output \
-            imgflash bash build.sh $ARGS
+            -v "$(pwd)/output:/build/output" \
+            imgflash $ARGS
 
       - name: "上传 ISO 产物"
         uses: actions/upload-artifact@v4
