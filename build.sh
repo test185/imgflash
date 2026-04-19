@@ -31,8 +31,9 @@ VOLUME_LABEL="${VOLUME_LABEL:-IMGFLASH}"
 REQUIRED_MODULES="${REQUIRED_MODULES:-squashfs isofs loop nls_cp437 nls_ascii ahci nvme xhci-hcd ehci-hcd usb-storage uas sr_mod sd_mod cdrom virtio_blk virtio_pci}"
 SCAN_TIMEOUT="${SCAN_TIMEOUT:-10}"
 
-SYSLINUX_DIR="/usr/share/syslinux"
-ISOHDPFX_PATH="${SYSLINUX_DIR}/isohdpfx.bin"
+ISOLINUX_BIN=$(find /usr -name isolinux.bin 2>/dev/null | head -1)
+LDLINUX_C32=$(find /usr -name ldlinux.c32 2>/dev/null | head -1)
+ISOHDPFX_PATH=$(find /usr -name isohdpfx.bin 2>/dev/null | head -1)
 
 # ---------------------------------------------------------------------------
 # 构建目录
@@ -430,15 +431,15 @@ cp "${BUILD_DIR}/initrd.img" "${ISO_DIR}/boot/initrd.img"
 cp "${BUILD_DIR}/image.squashfs" "${ISO_DIR}/image.squashfs"
 
 # Syslinux（BIOS 启动）
-if [[ ! -d "${SYSLINUX_DIR}" ]]; then
-    echo "错误：未找到 syslinux（${SYSLINUX_DIR}）。请安装 syslinux 包。" >&2
+if [[ -z "${ISOLINUX_BIN}" || -z "${LDLINUX_C32}" || -z "${ISOHDPFX_PATH}" ]]; then
+    echo "错误：未找到 syslinux 引导文件。请安装 syslinux-common 和 isolinux 包。" >&2
     exit 1
 fi
 
 mkdir -p "${ISO_DIR}/boot/syslinux"
-cp "${SYSLINUX_DIR}/isolinux.bin" "${ISO_DIR}/boot/syslinux/"
-cp "${SYSLINUX_DIR}/ldlinux.c32"  "${ISO_DIR}/boot/syslinux/"
-cp "${ISOHDPFX_PATH}"             "${ISO_DIR}/boot/syslinux/isohdpfx.bin"
+cp "${ISOLINUX_BIN}"  "${ISO_DIR}/boot/syslinux/isolinux.bin"
+cp "${LDLINUX_C32}"   "${ISO_DIR}/boot/syslinux/ldlinux.c32"
+cp "${ISOHDPFX_PATH}" "${ISO_DIR}/boot/syslinux/isohdpfx.bin"
 
 cat > "${ISO_DIR}/boot/syslinux/syslinux.cfg" << 'EOF'
 DEFAULT imgflash
