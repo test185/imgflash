@@ -328,6 +328,8 @@ fi
 echo "  正在解压模块（压缩格式 → .ko）..."
 find "${MOD_SRC}" -name '*.ko.xz' -exec xz -d -q {} +
 
+depmod -b "${DEBOOTSTRAP_DIR}" "${KVER}"
+
 # 用 modprobe 解析所需模块及依赖
 echo "  正在解析模块依赖链 ..."
 NEEDED_FILES=""
