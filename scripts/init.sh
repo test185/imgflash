@@ -17,9 +17,6 @@ emergency_shell() {
 /bin/busybox --install -s
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 
-# --- Restore GNU dd (busybox --install overwrites it with a symlink) ---
-cp /bin/gnu-dd /bin/dd 2>/dev/null
-
 # --- Mount virtual filesystems ---
 mkdir -p /proc /sys /dev /dev/pts /dev/shm /run /tmp
 mkdir -p /media/cdrom /image

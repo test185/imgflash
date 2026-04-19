@@ -11,7 +11,7 @@
 #
 # 构建流程：
 #   Phase 1: debootstrap 最小 Debian 环境
-#   Phase 2: 提取组件（内核 / shim / GRUB / BusyBox / GNU dd）
+#   Phase 2: 提取组件（内核 / shim / GRUB / BusyBox）
 #   Phase 3: 组装 initramfs
 #   Phase 4: 打包镜像容器
 #   Phase 5: 组装 ISO 文件系统结构
@@ -306,31 +306,6 @@ BUSYBOX_URL="https://busybox.net/downloads/binaries/${BUSYBOX_VERSION}-x86_64-li
 retry 3 5 curl -fSL -o "${BUILD_DIR}/busybox" "${BUSYBOX_URL}"
 chmod +x "${BUILD_DIR}/busybox"
 
-# --- 静态 GNU dd ---
-echo "  编译静态 GNU dd ..."
-
-GCC_VERSION=$(gcc -dumpversion)
-echo "    使用 GCC ${GCC_VERSION}"
-
-COREUTILS_VERSION=$(curl -sL "https://ftp.gnu.org/gnu/coreutils/" \
-    | grep -oP 'href="coreutils-\K[0-9]+(?:\.[0-9]+)*(?=[.]tar)' \
-    | sort -V | tail -1 || true)
-if [[ -z "${COREUTILS_VERSION}" ]]; then
-    echo "错误：无法检测 coreutils 版本" >&2; exit 1
-fi
-echo "    coreutils ${COREUTILS_VERSION}"
-
-CU_URL="https://ftp.gnu.org/gnu/coreutils/coreutils-${COREUTILS_VERSION}.tar.xz"
-CU_DIR="${BUILD_DIR}/coreutils-${COREUTILS_VERSION}"
-
-retry 3 5 curl -fSL "$CU_URL" | tar -xJ -C "${BUILD_DIR}"
-cd "${CU_DIR}"
-FORCE_UNSAFE_CONFIGURE=1 ./configure LDFLAGS="-static" --disable-nls 2>&1 | tail -5
-make -j"$(nproc)" src/dd V=0
-cp src/dd "${BUILD_DIR}/gnu-dd"
-cd "${SCRIPT_DIR}"
-chmod +x "${BUILD_DIR}/gnu-dd"
-
 echo "  Phase 2 完成。"
 
 # =============================================================================
@@ -349,10 +324,6 @@ mkdir -p "${INITRAMFS_DIR}"/{dev/pts,dev/shm}
 # BusyBox
 cp "${BUILD_DIR}/busybox" "${INITRAMFS_DIR}/bin/busybox"
 chmod +x "${INITRAMFS_DIR}/bin/busybox"
-
-# 静态 GNU dd（存为 gnu-dd，init.sh 启动时覆盖 /bin/dd）
-cp "${BUILD_DIR}/gnu-dd" "${INITRAMFS_DIR}/bin/gnu-dd"
-chmod +x "${INITRAMFS_DIR}/bin/gnu-dd"
 
 # /init 和 /usr/bin/installer
 cp "${SCRIPT_DIR}/scripts/init.sh" "${INITRAMFS_DIR}/init"

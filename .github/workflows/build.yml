@@ -19,12 +19,7 @@ jobs:
       - name: "检出仓库"
         uses: actions/checkout@v4
 
-      - name: "设置 GCC"
-        uses: egor-tensin/setup-gcc@v2
-        with:
-          version: latest
-
-      - name: "安装 ISO 构建工具"
+      - name: "安装构建依赖"
         run: |
           sudo apt-get update
           sudo apt-get install -y \

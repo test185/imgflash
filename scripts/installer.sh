@@ -125,7 +125,7 @@ do_install() {
     echo "Writing to /dev/$disk ..."
     echo ""
 
-    if "$DD" if="$IMAGE_FILE" of="/dev/$disk" bs=4M status=progress conv=fsync 2>&1; then
+    if "$DD" if="$IMAGE_FILE" of="/dev/$disk" bs=4M conv=fsync 2>&1; then
         sync
         echo ""
         echo "Write complete. Syncing..."
