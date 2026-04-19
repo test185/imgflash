@@ -411,7 +411,7 @@ echo "  原始镜像大小：${IMG_SIZE}"
 
 echo "  创建 squashfs（zstd）..."
 mksquashfs "${IMAGE_DIR}" "${BUILD_DIR}/image.squashfs" \
-    -comp zstd -no-progress -no-xattrs
+    -comp zstd -zstd-level=19 -no-progress -no-xattrs
 
 SQFS_SIZE=$(ls -lh "${BUILD_DIR}/image.squashfs" | awk '{print $5}')
 echo "  Squashfs 大小：${SQFS_SIZE}"
