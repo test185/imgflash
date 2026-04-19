@@ -309,7 +309,7 @@ chmod +x "${BUILD_DIR}/busybox"
 # --- 静态 GNU dd ---
 echo "  编译静态 GNU dd ..."
 COREUTILS_VERSION=$(curl -sL "https://ftp.gnu.org/gnu/coreutils/" \
-    | grep -oP 'href="coreutils-\K[\d.]+' \
+    | grep -oP 'href="coreutils-\K[0-9]+(?:\.[0-9]+)*(?=[.]tar)' \
     | sort -V | tail -1 || true)
 if [[ -z "${COREUTILS_VERSION}" ]]; then
     echo "错误：无法检测 coreutils 版本" >&2; exit 1
@@ -321,8 +321,8 @@ CU_DIR="${BUILD_DIR}/coreutils-${COREUTILS_VERSION}"
 
 retry 3 5 curl -fSL "$CU_URL" | tar -xJ -C "${BUILD_DIR}"
 cd "${CU_DIR}"
-./configure LDFLAGS="-static" --disable-nls --quiet 2>/dev/null
-make -j"$(nproc)" dd --quiet V=0 2>/dev/null
+./configure LDFLAGS="-static" --disable-nls 2>&1 | tail -5
+make -j"$(nproc)" dd V=0
 cp src/dd "${BUILD_DIR}/gnu-dd"
 cd "${SCRIPT_DIR}"
 chmod +x "${BUILD_DIR}/gnu-dd"
