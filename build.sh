@@ -326,7 +326,7 @@ mkdir -p "${INITRAMFS_DIR}"/{dev/pts,dev/shm}
 cp "${BUILD_DIR}/busybox" "${INITRAMFS_DIR}/bin/busybox"
 chmod +x "${INITRAMFS_DIR}/bin/busybox"
 
-# 创建 /bin/sh 符号链接
+# 创建 /bin/sh 符号链接（内核执行 /init 时需要解释器）
 ln -s busybox "${INITRAMFS_DIR}/bin/sh"
 
 # /init 和 /usr/bin/installer
@@ -347,12 +347,8 @@ if [[ ! -d "${MOD_SRC}" ]]; then
     echo "错误：找不到内核模块目录 ${MOD_SRC}" >&2; exit 1
 fi
 
-# 解压 .ko.zst 为 .ko（BusyBox modprobe 不支持压缩模块）
-for f in $(find "${MOD_SRC}" -name '*.ko.zst'); do
-    zstd -rm -q "$f"
-done
-
-# 用 modprobe 解析所需模块及依赖
+# 先解析依赖（.ko.zst 文件完好时 modules.dep 才正确）
+echo "  正在解析模块依赖链 ..."
 NEEDED_FILES=""
 for mod in ${REQUIRED_MODULES}; do
     deps=$(modprobe -d "${DEBOOTSTRAP_DIR}" -S "${KVER}" --show-depends "$mod" 2>/dev/null \
@@ -366,8 +362,10 @@ if [[ -z "$NEEDED_FILES" ]]; then
 fi
 
 MOD_DEST="${INITRAMFS_DIR}/lib/modules/${KVER}"
+mkdir -p "${MOD_DEST}"
 echo "  包含 $(echo "$NEEDED_FILES" | wc -l) 个模块（含依赖）"
 
+# 拷贝 .ko.zst 模块到 initramfs
 for mod_file in $NEEDED_FILES; do
     rel_path=$(echo "$mod_file" | sed "s|${MOD_SRC}/||")
     dest_dir="${MOD_DEST}/$(dirname "$rel_path")"
@@ -375,13 +373,19 @@ for mod_file in $NEEDED_FILES; do
     cp "$mod_file" "$dest_dir/"
 done
 
+# 拷贝模块元数据
 for f in modules.builtin modules.builtin.modinfo modules.order; do
     [ -f "${MOD_SRC}/$f" ] && cp "${MOD_SRC}/$f" "${MOD_DEST}/"
 done
 
+# 在 initramfs 内解压 .ko.zst → .ko（BusyBox modprobe 不支持压缩模块）
+echo "  正在为 BusyBox 解压模块 (.ko.zst → .ko) ..."
+find "${MOD_DEST}" -name '*.ko.zst' -exec zstd -rm -q {} +
+
+# 解压后重建依赖索引
 depmod -b "${INITRAMFS_DIR}" "${KVER}"
 
-MOD_COUNT=$(find "${INITRAMFS_DIR}/lib/modules" -name '*.ko*' | wc -l)
+MOD_COUNT=$(find "${INITRAMFS_DIR}/lib/modules" -name '*.ko' | wc -l)
 MOD_SIZE=$(du -sh "${INITRAMFS_DIR}/lib/modules" | awk '{print $1}')
 echo "  模块：${MOD_COUNT} 个文件，${MOD_SIZE}"
 

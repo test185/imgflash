@@ -18,19 +18,22 @@ emergency_shell() {
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 
 # --- Mount virtual filesystems ---
-mkdir -p /proc /sys /dev /dev/pts /dev/shm /run /tmp
-mkdir -p /media/cdrom /image
+mkdir -p /proc /sys /dev /run /tmp
 
 mount -t proc -o noexec,nosuid,nodev proc /proc
 mount -t sysfs -o noexec,nosuid,nodev sysfs /sys
 mount -t devtmpfs -o exec,nosuid,mode=0755 devtmpfs /dev 2>/dev/null \
     || mount -t tmpfs -o exec,nosuid,mode=0755 tmpfs /dev
 
+# devtmpfs 挂载后才能创建子挂载点
+mkdir -p /dev/pts /dev/shm
+mount -t devpts -o gid=5,mode=0620,noexec,nosuid devpts /dev/pts
+mount -t tmpfs -o nodev,nosuid,noexec shm /dev/shm
+
 [ -c /dev/null ] || mknod -m 666 /dev/null c 1 3
 [ -c /dev/kmsg ] || mknod -m 660 /dev/kmsg c 1 11
 
-mount -t devpts -o gid=5,mode=0620,noexec,nosuid devpts /dev/pts
-mount -t tmpfs -o nodev,nosuid,noexec shm /dev/shm
+mkdir -p /media/cdrom /image
 
 ln -sf /proc/mounts /etc/mtab
 
