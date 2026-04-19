@@ -190,13 +190,8 @@ do_install() {
 
     echo ""
 
-    if [ $dd_status -eq 0 ]; then
-        echo "Installation complete!"
-        return 0
-    else
-        echo "Installation failed!"
-        return 1
-    fi
+    [ $dd_status -ne 0 ] && echo "Installation failed!"
+    return $dd_status
 }
 
 # ---------------------------------------------------------------------------
@@ -226,6 +221,10 @@ main() {
                 if [ -n "$disk" ] && confirm "$disk"; then
                     if do_install "$disk"; then
                         echo ""
+                        echo "=========================="
+                        echo "  Installation complete!"
+                        echo "=========================="
+                        printf "Press Enter to reboot..."; read _
                         local sec=5
                         while [ $sec -gt 0 ]; do
                             printf "Rebooting in %d seconds...\n" "$sec"
