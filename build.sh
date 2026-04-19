@@ -241,9 +241,33 @@ echo ""
 echo "[Phase 1] debootstrap ${DEBIAN_SUITE} ..."
 
 rm -rf "${DEBOOTSTRAP_DIR}"
-debootstrap --variant=minbase --no-install-recommends \
-    --include=linux-image-amd64,shim-signed,grub-efi-amd64-signed \
+debootstrap --variant=minbase \
     "${DEBIAN_SUITE}" "${DEBOOTSTRAP_DIR}" "${DEBIAN_MIRROR}"
+
+# 挂载 chroot 所需的虚拟文件系统
+mount -t proc proc "${DEBOOTSTRAP_DIR}/proc"
+mount -t sysfs sysfs "${DEBOOTSTRAP_DIR}/sys"
+mount --bind /dev "${DEBOOTSTRAP_DIR}/dev"
+mount --bind /dev/pts "${DEBOOTSTRAP_DIR}/dev/pts"
+mount --bind /dev/shm "${DEBOOTSTRAP_DIR}/dev/shm"
+
+# DNS 解析（apt-get update 需要）
+cp /etc/resolv.conf "${DEBOOTSTRAP_DIR}/etc/resolv.conf"
+
+# 通过 chroot 安装签名内核和引导组件（禁用 recommends 减小体积）
+chroot "${DEBOOTSTRAP_DIR}" env DEBIAN_FRONTEND=noninteractive \
+    apt-get update
+
+chroot "${DEBOOTSTRAP_DIR}" env DEBIAN_FRONTEND=noninteractive \
+    apt-get install -y --no-install-recommends \
+    linux-image-amd64 shim-signed grub-efi-amd64-signed
+
+# 卸载虚拟文件系统
+umount -lf "${DEBOOTSTRAP_DIR}/dev/pts" 2>/dev/null || true
+umount -lf "${DEBOOTSTRAP_DIR}/dev/shm" 2>/dev/null || true
+umount -lf "${DEBOOTSTRAP_DIR}/dev"     2>/dev/null || true
+umount -lf "${DEBOOTSTRAP_DIR}/sys"     2>/dev/null || true
+umount -lf "${DEBOOTSTRAP_DIR}/proc"    2>/dev/null || true
 
 echo "  Phase 1 完成。"
 
