@@ -52,8 +52,9 @@ echo "ImgFlash init starting..."
 
 # --- Load kernel modules ---
 echo "Loading kernel modules..."
-modprobe -a squashfs isofs loop 2>/dev/null
-modprobe -a ahci nvme sd_mod sr_mod cdrom usb-storage 2>/dev/null
+modprobe -a squashfs isofs loop nls_cp437 nls_ascii 2>/dev/null
+modprobe -a ahci nvme sd_mod sr_mod cdrom 2>/dev/null
+modprobe -a xhci-hcd ehci-hcd usb-storage uas 2>/dev/null
 modprobe -a virtio_blk virtio_pci virtio 2>/dev/null
 
 # --- Wait for block devices to settle ---
