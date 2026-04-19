@@ -221,16 +221,24 @@ main() {
                 if [ -n "$disk" ] && confirm "$disk"; then
                     if do_install "$disk"; then
                         echo ""
-                        echo "=========================="
-                        echo "  Installation complete!"
-                        echo "=========================="
-                        printf "Press Enter to reboot..."; read _
-                        local sec=5
+                        echo "======================================"
+                        echo "       Installation Successful!       "
+                        echo "======================================"
+                        echo ""
+
+                        SRC_DEV=$(awk '$2 == "/media/cdrom" {print $1}' /proc/mounts)
+                        sync
+                        umount -fl /image 2>/dev/null
+                        umount -fl /media/cdrom 2>/dev/null
+                        [ -b "$SRC_DEV" ] && { eject "$SRC_DEV" 2>/dev/null || eject -s "$SRC_DEV" 2>/dev/null; }
+
+                        local sec=3
                         while [ $sec -gt 0 ]; do
-                            printf "Rebooting in %d seconds...\n" "$sec"
+                            printf "\rRebooting in %d seconds... " "$sec"
                             sec=$((sec - 1))
                             sleep 1
                         done
+                        echo ""
                         reboot -f
                     fi
                     echo ""
