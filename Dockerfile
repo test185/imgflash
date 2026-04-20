@@ -3,7 +3,7 @@ FROM debian:trixie
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y \
-    debootstrap debian-archive-keyring \
+    mmdebstrap debian-archive-keyring \
     curl file \
     xorriso squashfs-tools mtools dosfstools syslinux-common isolinux \
     xz-utils bzip2 p7zip-full unzip zstd cpio kmod \

@@ -10,7 +10,7 @@
 # 运行时：initramfs /init → exec installer → dd 写盘 → 重启
 #
 # 构建流程：
-#   Phase 1: debootstrap 最小 Debian 环境
+#   Phase 1: mmdebstrap 创建最小 Debian 环境
 #   Phase 2: 提取组件（内核 / shim / GRUB / BusyBox）
 #   Phase 3: 组装 initramfs
 #   Phase 4: 打包镜像容器
@@ -23,20 +23,28 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---------------------------------------------------------------------------
-# 默认配置（可通过环境变量覆盖）
+# 加载构建配置
 # ---------------------------------------------------------------------------
-DEBIAN_MIRROR="${DEBIAN_MIRROR:-https://ftp.debian.org/debian}"
-DEBIAN_SUITE="${DEBIAN_SUITE:-trixie}"
-VOLUME_LABEL="${VOLUME_LABEL:-IMGFLASH}"
-REQUIRED_MODULES="${REQUIRED_MODULES:-squashfs isofs loop \
-    nls_cp437 nls_ascii nls_utf8 \
-    ahci ata_piix ata_generic \
-    nvme \
-    xhci-hcd ehci-hcd usb-storage uas \
-    sr_mod sd_mod cdrom \
-    hid usbhid \
-    virtio virtio_blk virtio_pci virtio_scsi}"
-SCAN_TIMEOUT="${SCAN_TIMEOUT:-10}"
+ENV_FILE="${SCRIPT_DIR}/build.env"
+if [[ ! -f "${ENV_FILE}" ]]; then
+    echo "错误：缺少配置文件 ${ENV_FILE}" >&2; exit 1
+fi
+# shellcheck disable=SC1090
+source "${ENV_FILE}"
+
+
+# --- 基础模块（所有场景必需） ---
+BASE_MODULES="${MOD_FILESYSTEM} ${MOD_NLS} ${MOD_ATA} ${MOD_USB} ${MOD_CDROM} ${MOD_INPUT}"
+
+# --- 可选模块 ---
+OPT_NVME=""
+[[ "${INCLUDE_NVME}" != "0" ]] && OPT_NVME="${MOD_NVME}"
+
+OPT_VIRT=""
+[[ "${INCLUDE_VIRT}" != "0" ]] && OPT_VIRT="${MOD_VIRT}"
+
+# --- 最终模块列表 ---
+REQUIRED_MODULES="${BASE_MODULES} ${OPT_NVME} ${OPT_VIRT}"
 
 ISOLINUX_BIN=$(find /usr -name isolinux.bin 2>/dev/null | head -1)
 LDLINUX_C32=$(find /usr -name ldlinux.c32 2>/dev/null | head -1)
@@ -57,13 +65,6 @@ OUTPUT_DIR="${SCRIPT_DIR}/output"
 BUILD_SUCCESS=0
 
 cleanup() {
-    # 卸载 debootstrap 可能挂载的文件系统
-    if [[ -d "${DEBOOTSTRAP_DIR}" ]]; then
-        for mp in "${DEBOOTSTRAP_DIR}/dev/pts" "${DEBOOTSTRAP_DIR}/dev" \
-                   "${DEBOOTSTRAP_DIR}/proc" "${DEBOOTSTRAP_DIR}/sys"; do
-            mountpoint -q "$mp" 2>/dev/null && umount -l "$mp" 2>/dev/null
-        done
-    fi
     # 构建失败时清理半成品
     if [[ "${BUILD_SUCCESS}" -eq 0 && -d "${BUILD_DIR}" ]]; then
         echo "清理构建目录..."
@@ -185,7 +186,7 @@ fi
 # ---------------------------------------------------------------------------
 
 echo "==== 依赖检查 ===="
-REQUIRED_CMDS="debootstrap curl tar xz zstd modprobe depmod mksquashfs xorriso mcopy mmd mkfs.vfat cpio file"
+REQUIRED_CMDS="mmdebstrap curl tar xz zstd modprobe depmod mksquashfs xorriso mcopy mmd mkfs.vfat cpio file"
 for cmd in ${REQUIRED_CMDS}; do
     if ! command -v "$cmd" &>/dev/null; then
         echo "错误：缺少必要命令 '$cmd'，请先安装" >&2; exit 1
@@ -227,39 +228,17 @@ echo "=========================================="
 echo ""
 
 # =============================================================================
-# Phase 1: debootstrap 最小 Debian 环境
+# Phase 1: mmdebstrap 创建最小 Debian 环境
 # =============================================================================
 
-echo "[Phase 1] debootstrap ${DEBIAN_SUITE} ..."
+SIGNED_PKGS="linux-image-amd64,shim-signed,grub-efi-amd64-signed"
 
 rm -rf "${DEBOOTSTRAP_DIR}"
-debootstrap --variant=minbase \
+
+echo "[Phase 1] mmdebstrap ${DEBIAN_SUITE} ..."
+mmdebstrap --variant=essential \
+    --include="${SIGNED_PKGS}" \
     "${DEBIAN_SUITE}" "${DEBOOTSTRAP_DIR}" "${DEBIAN_MIRROR}"
-
-# 挂载 chroot 所需的虚拟文件系统
-mount -t proc proc "${DEBOOTSTRAP_DIR}/proc"
-mount -t sysfs sysfs "${DEBOOTSTRAP_DIR}/sys"
-mount --bind /dev "${DEBOOTSTRAP_DIR}/dev"
-mount --bind /dev/pts "${DEBOOTSTRAP_DIR}/dev/pts"
-mount --bind /dev/shm "${DEBOOTSTRAP_DIR}/dev/shm"
-
-# DNS 解析（apt-get update 需要）
-cp /etc/resolv.conf "${DEBOOTSTRAP_DIR}/etc/resolv.conf"
-
-# 通过 chroot 安装签名内核和引导组件（禁用 recommends 减小体积）
-chroot "${DEBOOTSTRAP_DIR}" env DEBIAN_FRONTEND=noninteractive \
-    apt-get update
-
-chroot "${DEBOOTSTRAP_DIR}" env DEBIAN_FRONTEND=noninteractive \
-    apt-get install -y --no-install-recommends \
-    linux-image-amd64 shim-signed grub-efi-amd64-signed
-
-# 卸载虚拟文件系统
-umount -lf "${DEBOOTSTRAP_DIR}/dev/pts" 2>/dev/null || true
-umount -lf "${DEBOOTSTRAP_DIR}/dev/shm" 2>/dev/null || true
-umount -lf "${DEBOOTSTRAP_DIR}/dev"     2>/dev/null || true
-umount -lf "${DEBOOTSTRAP_DIR}/sys"     2>/dev/null || true
-umount -lf "${DEBOOTSTRAP_DIR}/proc"    2>/dev/null || true
 
 echo "  Phase 1 完成。"
 
@@ -378,7 +357,7 @@ echo "  模块：${MOD_COUNT} 个文件，${MOD_SIZE}"
 # 打包 cpio 归档
 echo "  创建 initramfs 归档 ..."
 cd "${INITRAMFS_DIR}"
-find . -print0 | cpio --null -o -H newc --owner root:root 2>/dev/null | gzip -9 > "${BUILD_DIR}/initrd.img"
+find . -print0 | cpio --null -o -H newc --owner root:root 2>/dev/null | zstd -${ZSTD_LEVEL} > "${BUILD_DIR}/initrd.img"
 cd "${SCRIPT_DIR}"
 
 INITRD_SIZE=$(ls -lh "${BUILD_DIR}/initrd.img" | awk '{print $5}')
@@ -404,7 +383,7 @@ echo "  原始镜像大小：${IMG_SIZE}"
 
 echo "  创建 squashfs（zstd）..."
 mksquashfs "${IMAGE_DIR}" "${BUILD_DIR}/image.squashfs" \
-    -comp zstd -Xcompression-level 19 -no-progress -no-xattrs
+    -comp zstd -Xcompression-level ${ZSTD_LEVEL} -no-progress -no-xattrs
 
 SQFS_SIZE=$(ls -lh "${BUILD_DIR}/image.squashfs" | awk '{print $5}')
 echo "  Squashfs 大小：${SQFS_SIZE}"
@@ -462,10 +441,13 @@ menuentry "ImgFlash" {
 }
 EOF
 
-# FAT EFI 启动镜像
+# FAT EFI 启动镜像（按实际内容动态计算大小）
 mkdir -p "${ISO_DIR}/boot/grub"
 
-dd if=/dev/zero of="${ISO_DIR}/boot/grub/efi.img" bs=1M count=8 2>/dev/null
+EFI_FILES_SIZE=$(du -sc "${ISO_DIR}/EFI/BOOT/"* 2>/dev/null | tail -1 | awk '{print $1}')
+EFI_IMG_MB=$(( (EFI_FILES_SIZE / 1024 + 1 + 1) ))  # 数据 + FAT 开销，向上取整
+EFI_IMG_MB=$(( EFI_IMG_MB < 4 ? 4 : EFI_IMG_MB ))   # 最小 4MB
+dd if=/dev/zero of="${ISO_DIR}/boot/grub/efi.img" bs=1M count=${EFI_IMG_MB} 2>/dev/null
 mkfs.vfat -F 12 "${ISO_DIR}/boot/grub/efi.img" 2>/dev/null || \
     mkfs.vfat -F 16 "${ISO_DIR}/boot/grub/efi.img" 2>/dev/null || \
     mkfs.vfat -F 32 "${ISO_DIR}/boot/grub/efi.img" 2>/dev/null

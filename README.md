@@ -41,7 +41,7 @@
 
 | 阶段 | 说明 |
 |------|------|
-| Phase 1 | debootstrap 最小 Debian 环境 |
+| Phase 1 | mmdebstrap 创建最小 Debian 环境（含签名组件） |
 | Phase 2 | 提取签名内核 / shim / GRUB / BusyBox |
 | Phase 3 | 组装 initramfs（BusyBox + 内核模块 + 安装脚本） |
 | Phase 4 | 将镜像打包为 squashfs 容器（zstd 压缩） |
@@ -64,6 +64,12 @@ docker run --rm --privileged \
 docker run --rm --privileged \
   -v "$(pwd)/output:/build/output" \
   imgflash -u https://example.com/image.img.gz
+
+# 使用自定义配置构建
+docker run --rm --privileged \
+  -v "$(pwd)/output:/build/output" \
+  -v "$(pwd)/my.env:/build/build.env" \
+  imgflash -i /path/to/image.img
 ```
 
 ### 命令行参数
@@ -78,15 +84,20 @@ docker run --rm --privileged \
   -h, --help    显示帮助
 ```
 
-### 环境变量
+### 构建配置
 
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `DEBIAN_MIRROR` | `https://ftp.debian.org/debian` | Debian 镜像源 |
-| `DEBIAN_SUITE` | `trixie` | Debian 套件版本 |
-| `VOLUME_LABEL` | `IMGFLASH` | ISO 卷标 |
-| `SCAN_TIMEOUT` | `10` | 启动时扫描介质的超时秒数 |
-| `REQUIRED_MODULES` | squashfs isofs loop ... | 内置所需内核模块列表 |
+所有构建参数通过 `build.env` 配置
+
+| 变量 | 说明 |
+|------|------|
+| `DEBIAN_MIRROR` | Debian 镜像源 |
+| `DEBIAN_SUITE` | Debian 套件版本 |
+| `VOLUME_LABEL` | ISO 卷标 |
+| `MOD_*` | 各组内核模块定义 |
+| `INCLUDE_NVME` | NVMe 模块开关 |
+| `INCLUDE_VIRT` | 虚拟化模块开关 |
+| `SCAN_TIMEOUT` | 启动时扫描介质的超时秒数 |
+| `ZSTD_LEVEL` | 压缩级别 |
 
 ## GitHub Actions CI
 
