@@ -474,16 +474,9 @@ mkdir -p "${ISO_DIR}/EFI/BOOT"
 cp "${SHIM_SRC}" "${ISO_DIR}/EFI/BOOT/${EFI_SHIM_NAME}"
 cp "${GRUB_SRC}" "${ISO_DIR}/EFI/BOOT/${EFI_GRUB_NAME}"
 
-# 2. 定位 ISO 根后加载主配置
+# 2. 完整菜单配置
 cat > "${ISO_DIR}/EFI/BOOT/grub.cfg" << EOF
-search --no-floppy --label --set=root '${VOLUME_LABEL}'
-set prefix=(\$root)/boot/grub
-configfile (\$root)/boot/grub/grub.cfg
-EOF
-
-# 3. 放在 ISO 文件系统的标准路径
-mkdir -p "${ISO_DIR}/boot/grub"
-cat > "${ISO_DIR}/boot/grub/grub.cfg" << EOF
+search --no-floppy --label --set=root ${VOLUME_LABEL}
 set timeout=${BOOT_TIMEOUT}
 set default=0
 
