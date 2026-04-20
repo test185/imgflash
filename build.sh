@@ -497,8 +497,13 @@ echo "  EFI 镜像: ${FINAL_KB} KB"
 dd if=/dev/zero of="${EFI_IMG}" bs=1k count="${FINAL_KB}" 2>/dev/null
 mkfs.vfat -F 32 "${EFI_IMG}" >/dev/null
 
-mmd -i "${EFI_IMG}" ::EFI
-mcopy -s -i "${EFI_IMG}" "${ISO_DIR}/EFI/BOOT" ::EFI
+mmd -i "${EFI_IMG}" ::EFI ::EFI/BOOT
+
+mcopy -i "${EFI_IMG}" \
+    "${ISO_DIR}/EFI/BOOT/${EFI_SHIM_NAME}" \
+    "${ISO_DIR}/EFI/BOOT/${EFI_GRUB_NAME}" \
+    "${ISO_DIR}/EFI/BOOT/grub.cfg" \
+    ::EFI/BOOT/
 
 echo "  Phase 5 完成。"
 
