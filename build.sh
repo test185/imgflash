@@ -391,6 +391,9 @@ cd "${SCRIPT_DIR}"
 INITRD_SIZE=$(ls -lh "${BUILD_DIR}/initrd.img" | awk '{print $5}')
 echo "  Initramfs 大小：${INITRD_SIZE}"
 
+# debootstrap 环境不再需要，释放空间
+rm -rf "${DEBOOTSTRAP_DIR}" "${INITRAMFS_DIR}"
+
 echo "  Phase 3 完成。"
 
 # =============================================================================
@@ -403,8 +406,7 @@ echo "[Phase 4] 打包镜像容器 ..."
 IMAGE_DIR="${BUILD_DIR}/image"
 mkdir -p "${IMAGE_DIR}"
 
-cp "${BUILD_DIR}/temp.img" "${IMAGE_DIR}/image.img"
-rm -f "${BUILD_DIR}/temp.img"
+mv "${BUILD_DIR}/temp.img" "${IMAGE_DIR}/image.img"
 
 IMG_SIZE=$(ls -lh "${IMAGE_DIR}/image.img" | awk '{print $5}')
 echo "  原始镜像大小：${IMG_SIZE}"
@@ -416,6 +418,9 @@ mksquashfs "${IMAGE_DIR}" "${BUILD_DIR}/image.squashfs" \
 SQFS_SIZE=$(ls -lh "${BUILD_DIR}/image.squashfs" | awk '{print $5}')
 echo "  Squashfs 大小：${SQFS_SIZE}"
 
+# 镜像源文件不再需要，释放空间
+rm -rf "${IMAGE_DIR}"
+
 echo "  Phase 4 完成。"
 
 # =============================================================================
@@ -426,9 +431,9 @@ echo ""
 echo "[Phase 5] 组装 ISO 结构 ..."
 
 mkdir -p "${ISO_DIR}/boot"
-cp "${VMLINUZ}" "${ISO_DIR}/boot/vmlinuz"
-cp "${BUILD_DIR}/initrd.img" "${ISO_DIR}/boot/initrd.img"
-cp "${BUILD_DIR}/image.squashfs" "${ISO_DIR}/image.squashfs"
+mv "${VMLINUZ}" "${ISO_DIR}/boot/vmlinuz"
+mv "${BUILD_DIR}/initrd.img" "${ISO_DIR}/boot/initrd.img"
+mv "${BUILD_DIR}/image.squashfs" "${ISO_DIR}/image.squashfs"
 
 # Syslinux（BIOS 启动，仅 amd64）
 if [[ "${HAS_BIOS}" -eq 1 ]]; then
@@ -540,6 +545,9 @@ else
         -append_partition 2 0xef "${ISO_DIR}/boot/grub/efi.img" \
         "${ISO_DIR}"
 fi
+
+# ISO 已生成，释放 ISO 目录空间
+rm -rf "${ISO_DIR}"
 
 # CI 用 sudo 构建时产物归 root，修正属主
 [ "$(uname)" = "Linux" ] && chown "$(id -u):$(id -g)" "${FINAL_ISO}" 2>/dev/null || true
