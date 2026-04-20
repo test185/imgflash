@@ -6,12 +6,11 @@
 IMAGE_FILE="/image/image.img"
 DD_PID=""
 
-# Ctrl+C 清理后台 dd 进程
-trap 'echo ""; \
-      if [ -n "$DD_PID" ]; then \
-          kill -KILL $DD_PID 2>/dev/null; wait $DD_PID 2>/dev/null; DD_PID=""; \
-          echo "Aborted by user!"; echo "Returning to menu..."; \
-      fi' INT
+# Ctrl+C 终止 dd 并重启安装器
+trap 'if [ -n "$DD_PID" ]; then
+          kill -KILL $DD_PID 2>/dev/null; wait $DD_PID 2>/dev/null
+      fi
+      echo ""; echo "Aborted!"; exec "$0"' INT
 
 # ---------------------------------------------------------------------------
 # 磁盘枚举（通过 /sys/block，无需 lsblk）
