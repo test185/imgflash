@@ -16,6 +16,10 @@ on:
       iso_name:
         description: '输出 ISO 文件名(留空则使用原始名称)'
         required: false
+      free_space:
+        description: '释放 Action 空间'
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -24,6 +28,7 @@ jobs:
 
     steps:
       - name: "释放磁盘空间"
+        if: ${{ github.event.inputs.free_space == 'true' }}
         uses: jlumbroso/free-disk-space@main
         with:
           tool-cache: true
