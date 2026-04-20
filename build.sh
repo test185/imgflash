@@ -357,7 +357,7 @@ echo "  模块：${MOD_COUNT} 个文件，${MOD_SIZE}"
 # 打包 cpio 归档
 echo "  创建 initramfs 归档 ..."
 cd "${INITRAMFS_DIR}"
-find . -print0 | cpio --null -o -H newc --owner root:root 2>/dev/null | zstd -${ZSTD_LEVEL} > "${BUILD_DIR}/initrd.img"
+find . -print0 | cpio --null -o -H newc --owner root:root 2>/dev/null | gzip -9 > "${BUILD_DIR}/initrd.img"
 cd "${SCRIPT_DIR}"
 
 INITRD_SIZE=$(ls -lh "${BUILD_DIR}/initrd.img" | awk '{print $5}')
