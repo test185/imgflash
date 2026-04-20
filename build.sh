@@ -189,15 +189,6 @@ show_help() {
     echo "  -h, --help    显示此帮助"
 }
 
-disk_usage() {
-    local label="${1:-debug}"
-    local total=$(du -sh "${BUILD_DIR}" 2>/dev/null | awk '{print $1}')
-    local rootfs=$(du -sh "${ROOTFS_DIR}" 2>/dev/null | awk '{print $1}')
-    local initramfs=$(du -sh "${INITRAMFS_DIR}" 2>/dev/null | awk '{print $1}')
-    local iso=$(du -sh "${ISO_DIR}" 2>/dev/null | awk '{print $1}')
-    echo "  [磁盘占用:${label}] total=${total} rootfs=${rootfs} initramfs=${initramfs} iso=${iso}"
-}
-
 while [[ $# -gt 0 ]]; do
     case $1 in
         -i|--image)
@@ -277,7 +268,6 @@ mmdebstrap --variant=essential \
     --include="${SIGNED_PKGS}" \
     "${DEBIAN_SUITE}" "${ROOTFS_DIR}" "${DEBIAN_MIRROR}"
 
-disk_usage "Phase1_END"
 echo "  Phase 1 完成。"
 
 # =============================================================================
@@ -312,7 +302,6 @@ echo "  BusyBox $(busybox --help 2>&1 | head -1 | awk '{print $NF}')"
 rm -rf "${ROOTFS_DIR}/var/lib/apt/lists"/* \
        "${ROOTFS_DIR}/var/cache/apt"/*
 
-disk_usage "Phase2_END"
 echo "  Phase 2 完成。"
 
 # =============================================================================
@@ -386,8 +375,6 @@ for f in modules.builtin modules.builtin.modinfo modules.order; do
     [ -f "${MOD_SRC}/$f" ] && cp "${MOD_SRC}/$f" "${MOD_DEST}/"
 done
 
-disk_usage "MODULES_COPIED"
-
 # 模块已全部复制到 initramfs，提取后续阶段需要的文件，然后释放 rootfs
 cp "${VMLINUZ}"   "${BUILD_DIR}/vmlinuz"
 cp "${SHIM_SRC}"  "${BUILD_DIR}/shim.efi"
@@ -397,7 +384,6 @@ SHIM_SRC="${BUILD_DIR}/shim.efi"
 GRUB_SRC="${BUILD_DIR}/grub.efi"
 
 rm -rf "${ROOTFS_DIR}"
-disk_usage "ROOTFS_DELETED"
 
 depmod -b "${INITRAMFS_DIR}" "${KVER}"
 
@@ -414,11 +400,8 @@ cd "${SCRIPT_DIR}"
 INITRD_SIZE=$(ls -lh "${BUILD_DIR}/initrd.img" | awk '{print $5}')
 echo "  Initramfs 大小：${INITRD_SIZE}"
 
-disk_usage "INITRD_CREATED"
-
 # initramfs 打包完成，释放空间
 rm -rf "${INITRAMFS_DIR}"
-disk_usage "INITRAMFS_DELETED"
 
 echo "  Phase 3 完成。"
 
@@ -430,7 +413,6 @@ echo ""
 echo "[Phase 4] 打包镜像容器 ..."
 
 mv "${BUILD_DIR}/temp.img" "${BUILD_DIR}/image.img"
-disk_usage "IMAGE_MOVED"
 
 IMG_SIZE=$(ls -lh "${BUILD_DIR}/image.img" | awk '{print $5}')
 echo "  原始镜像大小：${IMG_SIZE}"
@@ -442,11 +424,8 @@ mksquashfs "${BUILD_DIR}/image.img" "${BUILD_DIR}/image.squashfs" \
 SQFS_SIZE=$(ls -lh "${BUILD_DIR}/image.squashfs" | awk '{print $5}')
 echo "  Squashfs 大小：${SQFS_SIZE}"
 
-disk_usage "SQUASHFS_CREATED"
-
 # 镜像源文件不再需要，释放空间
 rm -f "${BUILD_DIR}/image.img"
-disk_usage "IMAGE_DELETED"
 
 echo "  Phase 4 完成。"
 
@@ -461,8 +440,6 @@ mkdir -p "${ISO_DIR}/boot"
 mv "${VMLINUZ}" "${ISO_DIR}/boot/vmlinuz"
 mv "${BUILD_DIR}/initrd.img" "${ISO_DIR}/boot/initrd.img"
 mv "${BUILD_DIR}/image.squashfs" "${ISO_DIR}/image.squashfs"
-
-disk_usage "ISO_FILES_MOVED"
 
 # Syslinux（BIOS 启动，仅 amd64）
 if [[ "${HAS_BIOS}" -eq 1 ]]; then
@@ -518,22 +495,17 @@ EOF
 
 # 4. 制作 efi.img
 EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
-FILE_BYTES=$(du -sb "${ISO_DIR}/EFI/BOOT" | awk '{print $1}')
-FILE_SECTORS=$(( (FILE_BYTES + 511) / 512 ))
-
-CLUSTERS=$(( FILE_SECTORS > 4085 ? FILE_SECTORS : 4085 ))
-
-FAT_SECTORS=$(( (CLUSTERS * 2 + 511) / 512 + 1 ))
-OVERHEAD=$(( 1 + 32 + FAT_SECTORS * 2 ))
-TOTAL_SECTORS=$(( CLUSTERS + OVERHEAD ))
-
-dd if=/dev/zero of="${EFI_IMG}" bs=512 count=${TOTAL_SECTORS} 2>/dev/null
-mkfs.vfat -F 16 -s 1 "${EFI_IMG}" >/dev/null
+SOURCE_KB=$(du -skL "${ISO_DIR}/EFI/BOOT" | awk '{print $1}')
+FINAL_KB=$(( SOURCE_KB + 2048 ))
+[[ ${FINAL_KB} -lt $((32 * 1024)) ]] && FINAL_KB=$((32 * 1024))
+[[ ${FINAL_KB} -gt $((256 * 1024)) ]] && FINAL_KB=$((256 * 1024))
+echo "  EFI 镜像: ${FINAL_KB} KB"
+dd if=/dev/zero of="${EFI_IMG}" bs=1k count="${FINAL_KB}" 2>/dev/null
+mkfs.vfat -F 32 "${EFI_IMG}" >/dev/null
 
 mmd -i "${EFI_IMG}" ::EFI
 mcopy -s -i "${EFI_IMG}" "${ISO_DIR}/EFI/BOOT" ::EFI
 
-disk_usage "EFI_IMG_CREATED"
 echo "  Phase 5 完成。"
 
 # =============================================================================
@@ -544,8 +516,6 @@ echo ""
 echo "[Phase 6] 生成 ISO ..."
 
 FINAL_ISO="${OUTPUT_DIR}/${ISO_NAME}.iso"
-
-disk_usage "BEFORE_XORRISO"
 
 if [[ "${HAS_BIOS}" -eq 1 ]]; then
     xorriso -as mkisofs \
@@ -580,7 +550,6 @@ fi
 
 # ISO 已生成，释放 ISO 目录空间
 rm -rf "${ISO_DIR}"
-disk_usage "BUILD_COMPLETE"
 
 # CI 用 sudo 构建时产物归 root，修正属主
 [ "$(uname)" = "Linux" ] && chown "$(id -u):$(id -g)" "${FINAL_ISO}" 2>/dev/null || true
