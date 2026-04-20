@@ -226,19 +226,27 @@ main() {
                         echo "======================================"
                         echo ""
 
-                        SRC_DEV=$(awk '$2 == "/media/cdrom" {print $1}' /proc/mounts)
-                        sync
-                        umount -fl /image 2>/dev/null
-                        umount -fl /media/cdrom 2>/dev/null
-                        [ -b "$SRC_DEV" ] && { eject "$SRC_DEV" 2>/dev/null || eject -s "$SRC_DEV" 2>/dev/null; }
+                        echo "-------------------------------------------------"
+                        echo "           [ NOTICE BEFORE REBOOTING ]           "
+                        echo ""
+                        echo "  * Please REMOVE the USB drive or Disc.         "
+                        echo "  * Ensure media is removed to avoid boot loops. "
+                        echo "-------------------------------------------------"
+                        echo ""
 
-                        local sec=3
+                        printf "Ready? Press [ENTER] to continue..."; read _
+                        echo ""
+
+                        local sec=5
                         while [ $sec -gt 0 ]; do
                             printf "\rRebooting in %d seconds... " "$sec"
                             sec=$((sec - 1))
                             sleep 1
                         done
-                        echo ""
+
+                        echo -e "\nRebooting now."
+
+                        sync
                         reboot -f
                     fi
                     echo ""
