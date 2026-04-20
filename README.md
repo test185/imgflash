@@ -33,8 +33,11 @@
 
 纯 initramfs-only，无 rootfs、无 overlayfs、无 init 切换：
 
-- **UEFI Secure Boot 链**：shim（Microsoft 签名）→ GRUB（Debian 签名）→ vmlinuz（Debian 签名）
-- **BIOS 启动链**：syslinux → vmlinuz
+- **amd64**：UEFI Secure Boot + BIOS 双启动
+  - UEFI 链：shim（Microsoft 签名）→ GRUB（Debian 签名）→ vmlinuz（Debian 签名）
+  - BIOS 链：syslinux → vmlinuz
+- **arm64**：UEFI Secure Boot 单启动
+  - UEFI 链：shim → GRUB → vmlinuz
 - **运行时**：initramfs `/init` → 加载模块/挂载介质 → exec `installer` → dd 写盘 → 重启
 
 ## 构建流程
@@ -45,8 +48,8 @@
 | Phase 2 | 提取签名内核 / shim / GRUB / BusyBox |
 | Phase 3 | 组装 initramfs（BusyBox + 内核模块 + 安装脚本） |
 | Phase 4 | 将镜像打包为 squashfs 容器（zstd 压缩） |
-| Phase 5 | 组装 ISO 文件系统结构（BIOS + UEFI 引导） |
-| Phase 6 | xorriso 生成最终混合启动 ISO |
+| Phase 5 | 组装 ISO 文件系统结构（UEFI 引导 + 可选 BIOS 引导） |
+| Phase 6 | xorriso 生成最终 ISO |
 
 ## 使用方式
 
@@ -86,18 +89,21 @@ docker run --rm --privileged \
 
 ### 构建配置
 
-所有构建参数通过 `build.env` 配置
+所有构建参数通过 `build.env` 配置，修改后重新构建即可生效。
 
-| 变量 | 说明 |
-|------|------|
-| `DEBIAN_MIRROR` | Debian 镜像源 |
-| `DEBIAN_SUITE` | Debian 套件版本 |
-| `VOLUME_LABEL` | ISO 卷标 |
-| `MOD_*` | 各组内核模块定义 |
-| `INCLUDE_NVME` | NVMe 模块开关 |
-| `INCLUDE_VIRT` | 虚拟化模块开关 |
-| `SCAN_TIMEOUT` | 启动时扫描介质的超时秒数 |
-| `ZSTD_LEVEL` | 压缩级别 |
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `ARCH` | 目标架构（amd64 / arm64） | `amd64` |
+| `DEBIAN_MIRROR` | Debian 镜像源 | `https://ftp.debian.org/debian` |
+| `DEBIAN_SUITE` | Debian 套件版本 | `trixie` |
+| `VOLUME_LABEL` | ISO 卷标 | `IMGFLASH` |
+| `MOD_*` | 各组内核模块定义 | 见 build.env |
+| `INCLUDE_NVME` | NVMe 模块开关（0 禁用） | `1` |
+| `INCLUDE_VIRT` | 虚拟化模块开关（0 禁用） | `1` |
+| `BOOT_TIMEOUT` | 启动菜单超时（秒） | `3` |
+| `KERNEL_PARAMS` | 内核启动参数 | `quiet` |
+| `SCAN_TIMEOUT` | 启动时扫描介质的超时秒数 | `10` |
+| `ZSTD_LEVEL` | zstd 压缩级别 | `19` |
 
 ## GitHub Actions CI
 
@@ -105,8 +111,9 @@ docker run --rm --privileged \
 
 1. 进入仓库 Actions 页面
 2. 选择 "构建 ImgFlash 安装器 ISO" 工作流
-3. 填入镜像下载地址和可选的 ISO 名称
-4. 构建完成后从 Artifacts 下载 ISO
+3. 选择目标架构（amd64 / arm64）
+4. 填入镜像下载地址和可选的 ISO 名称
+5. 构建完成后从 Artifacts 下载 ISO
 
 ## 安装器运行时
 

@@ -6,18 +6,28 @@ on:
       download_url:
         description: '磁盘镜像下载地址（支持 raw / gz / xz / bz2 / zip / 7z）'
         required: true
+      arch:
+        description: '目标架构'
+        type: choice
+        options:
+          - amd64
+          - arm64
+        default: amd64
       iso_name:
         description: '输出 ISO 文件名(留空则使用原始名称)'
         required: false
 
 jobs:
   build:
-    name: "构建 ISO"
+    name: "构建 ISO (${{ github.event.inputs.arch }})"
     runs-on: ubuntu-latest
 
     steps:
       - name: "检出仓库"
         uses: actions/checkout@v4
+
+      - name: "设置目标架构"
+        run: sed -i "s/^ARCH=.*/ARCH=${{ github.event.inputs.arch }}/" build.env
 
       - name: "构建 Docker 镜像"
         run: docker build -t imgflash .
@@ -36,5 +46,5 @@ jobs:
       - name: "上传 ISO 产物"
         uses: actions/upload-artifact@v4
         with:
-          name: imgflash-iso
+          name: imgflash-iso-${{ github.event.inputs.arch }}
           path: output/*.iso

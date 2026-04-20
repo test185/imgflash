@@ -33,6 +33,35 @@ fi
 # shellcheck disable=SC1090
 source "${ENV_FILE}"
 
+# --- 架构映射 ---
+case "${ARCH}" in
+    amd64)
+        KERNEL_PKG="linux-image-amd64"
+        SHIM_PKG="shim-signed"
+        GRUB_PKG="grub-efi-amd64-signed"
+        SHIM_FIND="shimx64.efi.signed"
+        GRUB_FIND="grubx64.efi.signed"
+        EFI_SHIM_NAME="BOOTX64.EFI"
+        EFI_GRUB_NAME="grubx64.efi"
+        HAS_BIOS=1
+        ;;
+    arm64)
+        KERNEL_PKG="linux-image-arm64"
+        SHIM_PKG="shim-arm64-signed"
+        GRUB_PKG="grub-efi-arm64-signed"
+        SHIM_FIND="shimaa64.efi.signed"
+        GRUB_FIND="grubaa64.efi.signed"
+        EFI_SHIM_NAME="BOOTAA64.EFI"
+        EFI_GRUB_NAME="grubaa64.efi"
+        HAS_BIOS=0
+        ;;
+    *)
+        echo "错误：不支持的架构 '${ARCH}'（支持 amd64 / arm64）" >&2; exit 1
+        ;;
+esac
+
+SIGNED_PKGS="${KERNEL_PKG},${SHIM_PKG},${GRUB_PKG}"
+
 # --- 基础模块（所有场景必需） ---
 BASE_MODULES="${MOD_FILESYSTEM} ${MOD_NLS} ${MOD_ATA} ${MOD_USB} ${MOD_CDROM} ${MOD_INPUT}"
 
@@ -222,6 +251,7 @@ echo "=========================================="
 echo "  ImgFlash - ISO 构建器"
 echo "=========================================="
 echo "  Debian 套件 : ${DEBIAN_SUITE}"
+echo "  目标架构    : ${ARCH}"
 echo "  Debian 镜像 : ${DEBIAN_MIRROR}"
 echo "  输出名称    : ${ISO_NAME}"
 echo "=========================================="
@@ -231,11 +261,9 @@ echo ""
 # Phase 1: mmdebstrap 创建最小 Debian 环境
 # =============================================================================
 
-SIGNED_PKGS="linux-image-amd64,shim-signed,grub-efi-amd64-signed"
-
 rm -rf "${DEBOOTSTRAP_DIR}"
 
-echo "[Phase 1] mmdebstrap ${DEBIAN_SUITE} ..."
+echo "[Phase 1] mmdebstrap ${DEBIAN_SUITE} (${ARCH}) ..."
 mmdebstrap --variant=essential \
     --include="${SIGNED_PKGS}" \
     "${DEBIAN_SUITE}" "${DEBOOTSTRAP_DIR}" "${DEBIAN_MIRROR}"
@@ -258,8 +286,8 @@ KVER=$(basename "${VMLINUZ}" | sed 's/^vmlinuz-//')
 echo "  内核版本：${KVER}"
 
 # --- shim + 签名 GRUB ---
-SHIM_SRC=$(find "${DEBOOTSTRAP_DIR}" -name 'shimx64.efi.signed' 2>/dev/null | head -1)
-GRUB_SRC=$(find "${DEBOOTSTRAP_DIR}" -name 'grubx64.efi.signed' 2>/dev/null | head -1)
+SHIM_SRC=$(find "${DEBOOTSTRAP_DIR}" -name "${SHIM_FIND}" 2>/dev/null | head -1)
+GRUB_SRC=$(find "${DEBOOTSTRAP_DIR}" -name "${GRUB_FIND}" 2>/dev/null | head -1)
 if [[ -z "${SHIM_SRC}" || -z "${GRUB_SRC}" ]]; then
     echo "错误：debootstrap 环境中未找到 shim 或 GRUB" >&2; exit 1
 fi
@@ -402,34 +430,38 @@ cp "${VMLINUZ}" "${ISO_DIR}/boot/vmlinuz"
 cp "${BUILD_DIR}/initrd.img" "${ISO_DIR}/boot/initrd.img"
 cp "${BUILD_DIR}/image.squashfs" "${ISO_DIR}/image.squashfs"
 
-# Syslinux（BIOS 启动）
-if [[ -z "${ISOLINUX_BIN}" || -z "${LDLINUX_C32}" || -z "${ISOHDPFX_PATH}" ]]; then
-    echo "错误：未找到 syslinux 引导文件。请安装 syslinux-common 和 isolinux 包。" >&2
-    exit 1
-fi
+# Syslinux（BIOS 启动，仅 amd64）
+if [[ "${HAS_BIOS}" -eq 1 ]]; then
+    if [[ -z "${ISOLINUX_BIN}" || -z "${LDLINUX_C32}" || -z "${ISOHDPFX_PATH}" ]]; then
+        echo "错误：未找到 syslinux 引导文件。请安装 syslinux-common 和 isolinux 包。" >&2
+        exit 1
+    fi
 
-mkdir -p "${ISO_DIR}/boot/syslinux"
-cp "${ISOLINUX_BIN}"  "${ISO_DIR}/boot/syslinux/isolinux.bin"
-cp "${LDLINUX_C32}"   "${ISO_DIR}/boot/syslinux/ldlinux.c32"
-cp "${ISOHDPFX_PATH}" "${ISO_DIR}/boot/syslinux/isohdpfx.bin"
+    mkdir -p "${ISO_DIR}/boot/syslinux"
+    cp "${ISOLINUX_BIN}"  "${ISO_DIR}/boot/syslinux/isolinux.bin"
+    cp "${LDLINUX_C32}"   "${ISO_DIR}/boot/syslinux/ldlinux.c32"
+    cp "${ISOHDPFX_PATH}" "${ISO_DIR}/boot/syslinux/isohdpfx.bin"
 
-cat > "${ISO_DIR}/boot/syslinux/syslinux.cfg" << 'EOF'
+    SYSLINUX_TIMEOUT=$(( BOOT_TIMEOUT * 10 ))
+
+    cat > "${ISO_DIR}/boot/syslinux/syslinux.cfg" << EOF
 DEFAULT imgflash
 PROMPT 0
-TIMEOUT 30
+TIMEOUT ${SYSLINUX_TIMEOUT}
 
 LABEL imgflash
   KERNEL /boot/vmlinuz
   INITRD /boot/initrd.img
-  APPEND quiet
+  APPEND ${KERNEL_PARAMS}
 EOF
+fi
 
 # EFI 启动（Secure Boot 链：shim → GRUB → 内核）
 
 # 1. 先把文件集结到 ISO 根目录
 mkdir -p "${ISO_DIR}/EFI/BOOT"
-cp "${SHIM_SRC}" "${ISO_DIR}/EFI/BOOT/BOOTX64.EFI"
-cp "${GRUB_SRC}" "${ISO_DIR}/EFI/BOOT/grubx64.efi"
+cp "${SHIM_SRC}" "${ISO_DIR}/EFI/BOOT/${EFI_SHIM_NAME}"
+cp "${GRUB_SRC}" "${ISO_DIR}/EFI/BOOT/${EFI_GRUB_NAME}"
 
 # 2. 定位 ISO 根后加载主配置
 cat > "${ISO_DIR}/EFI/BOOT/grub.cfg" << EOF
@@ -441,23 +473,28 @@ EOF
 # 3. 放在 ISO 文件系统的标准路径
 mkdir -p "${ISO_DIR}/boot/grub"
 cat > "${ISO_DIR}/boot/grub/grub.cfg" << EOF
-set timeout=3
+set timeout=${BOOT_TIMEOUT}
 set default=0
 
 menuentry "ImgFlash" {
-    linux /boot/vmlinuz quiet
+    linux /boot/vmlinuz ${KERNEL_PARAMS}
     initrd /boot/initrd.img
 }
 EOF
 
-# 4. 计算大小
+# 4. 制作 efi.img
 EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
-EFI_SIZE_KB=$(du -sk "${ISO_DIR}/EFI/BOOT" | awk '{print $1}')
-EFI_IMG_MB=$(( (EFI_SIZE_KB + 1023) / 1024 + 2 ))
-[[ ${EFI_IMG_MB} -lt 4 ]] && EFI_IMG_MB=4
+FILE_BYTES=$(du -sb "${ISO_DIR}/EFI/BOOT" | awk '{print $1}')
+FILE_SECTORS=$(( (FILE_BYTES + 511) / 512 ))
 
-dd if=/dev/zero of="${EFI_IMG}" bs=1M count=${EFI_IMG_MB} 2>/dev/null
-mkfs.vfat -F 16 "${EFI_IMG}" >/dev/null
+CLUSTERS=$(( FILE_SECTORS > 4085 ? FILE_SECTORS : 4085 ))
+
+FAT_SECTORS=$(( (CLUSTERS * 2 + 511) / 512 + 1 ))
+OVERHEAD=$(( 1 + 32 + FAT_SECTORS * 2 ))
+TOTAL_SECTORS=$(( CLUSTERS + OVERHEAD ))
+
+dd if=/dev/zero of="${EFI_IMG}" bs=512 count=${TOTAL_SECTORS} 2>/dev/null
+mkfs.vfat -F 16 -s 1 "${EFI_IMG}" >/dev/null
 
 mmd -i "${EFI_IMG}" ::EFI
 mcopy -s -i "${EFI_IMG}" "${ISO_DIR}/EFI/BOOT" ::EFI
@@ -473,23 +510,36 @@ echo "[Phase 6] 生成 ISO ..."
 
 FINAL_ISO="${OUTPUT_DIR}/${ISO_NAME}.iso"
 
-xorriso -as mkisofs \
-    -iso-level 3 \
-    -o "${FINAL_ISO}" \
-    -full-iso9660-filenames \
-    -volid "${VOLUME_LABEL}" \
-    -isohybrid-mbr "${ISO_DIR}/boot/syslinux/isohdpfx.bin" \
-    -eltorito-boot boot/syslinux/isolinux.bin \
-        -no-emul-boot \
-        -boot-load-size 4 \
-        -boot-info-table \
-        --eltorito-catalog boot/syslinux/boot.cat \
-    -eltorito-alt-boot \
-        -e boot/grub/efi.img \
-        -no-emul-boot \
+if [[ "${HAS_BIOS}" -eq 1 ]]; then
+    xorriso -as mkisofs \
+        -iso-level 3 \
+        -o "${FINAL_ISO}" \
+        -full-iso9660-filenames \
+        -volid "${VOLUME_LABEL}" \
+        -isohybrid-mbr "${ISO_DIR}/boot/syslinux/isohdpfx.bin" \
+        -eltorito-boot boot/syslinux/isolinux.bin \
+            -no-emul-boot \
+            -boot-load-size 4 \
+            -boot-info-table \
+            --eltorito-catalog boot/syslinux/boot.cat \
+        -eltorito-alt-boot \
+            -e boot/grub/efi.img \
+            -no-emul-boot \
         -isohybrid-gpt-basdat \
-    -append_partition 2 0xef "${ISO_DIR}/boot/grub/efi.img" \
-    "${ISO_DIR}"
+        -append_partition 2 0xef "${ISO_DIR}/boot/grub/efi.img" \
+        "${ISO_DIR}"
+else
+    xorriso -as mkisofs \
+        -iso-level 3 \
+        -o "${FINAL_ISO}" \
+        -full-iso9660-filenames \
+        -volid "${VOLUME_LABEL}" \
+        -eltorito-alt-boot \
+            -e boot/grub/efi.img \
+            -no-emul-boot \
+        -append_partition 2 0xef "${ISO_DIR}/boot/grub/efi.img" \
+        "${ISO_DIR}"
+fi
 
 # CI 用 sudo 构建时产物归 root，修正属主
 [ "$(uname)" = "Linux" ] && chown "$(id -u):$(id -g)" "${FINAL_ISO}" 2>/dev/null || true
