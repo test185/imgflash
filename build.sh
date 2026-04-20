@@ -2,10 +2,11 @@
 # =============================================================================
 # ImgFlash - 纯 initramfs ISO 构建器
 # =============================================================================
-# 生成同时支持 BIOS + UEFI（含 Secure Boot）的混合启动 ISO。
+# 生成同时支持 BIOS + UEFI 的混合启动 ISO。
 #
 # 架构：纯 initramfs-only（无 rootfs、无 overlayfs、无 OpenRC）。
-#   UEFI: shim（Microsoft 签名）→ GRUB（Debian 签名）→ vmlinuz（Debian 签名）
+#   UEFI (SB=1): shim（Microsoft 签名）→ GRUB（Debian 签名）→ vmlinuz（Debian 签名）
+#   UEFI (SB=0): GRUB（Debian 签名）→ vmlinuz（Debian 签名）
 #   BIOS: syslinux → vmlinuz
 # 运行时：initramfs /init → exec installer → dd 写盘 → 重启
 #
@@ -60,7 +61,8 @@ case "${ARCH}" in
         ;;
 esac
 
-SIGNED_PKGS="${KERNEL_PKG},${SHIM_PKG},${GRUB_PKG}"
+SIGNED_PKGS="${KERNEL_PKG},${GRUB_PKG}"
+[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && SIGNED_PKGS="${KERNEL_PKG},${SHIM_PKG},${GRUB_PKG}"
 
 # --- 基础模块（所有场景必需） ---
 BASE_MODULES="${MOD_FILESYSTEM} ${MOD_NLS} ${MOD_ATA} ${MOD_USB} ${MOD_CDROM} ${MOD_INPUT}"
@@ -252,6 +254,7 @@ echo "  ImgFlash - ISO 构建器"
 echo "=========================================="
 echo "  Debian 套件 : ${DEBIAN_SUITE}"
 echo "  目标架构    : ${ARCH}"
+echo "  Secure Boot : $([ "${ENABLE_SECURE_BOOT:-0}" == "1" ] && echo "启用" || echo "禁用")"
 echo "  Debian 镜像 : ${DEBIAN_MIRROR}"
 echo "  输出名称    : ${ISO_NAME}"
 echo "=========================================="
@@ -286,10 +289,12 @@ KVER=$(basename "${VMLINUZ}" | sed 's/^vmlinuz-//')
 echo "  内核版本：${KVER}"
 
 # --- shim + 签名 GRUB ---
-SHIM_SRC=$(find "${ROOTFS_DIR}" -name "${SHIM_FIND}" 2>/dev/null | head -1)
 GRUB_SRC=$(find "${ROOTFS_DIR}" -name "${GRUB_FIND}" 2>/dev/null | head -1)
-if [[ -z "${SHIM_SRC}" || -z "${GRUB_SRC}" ]]; then
-    echo "错误：rootfs 中未找到 shim 或 GRUB" >&2; exit 1
+[[ -n "${GRUB_SRC}" ]] || { echo "错误：rootfs 中未找到 GRUB" >&2; exit 1; }
+
+if [[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]]; then
+    SHIM_SRC=$(find "${ROOTFS_DIR}" -name "${SHIM_FIND}" 2>/dev/null | head -1)
+    [[ -n "${SHIM_SRC}" ]] || { echo "错误：rootfs 中未找到 shim" >&2; exit 1; }
 fi
 
 # --- BusyBox（来自 busybox-static 包，静态链接） ---
@@ -377,11 +382,14 @@ done
 
 # 模块已全部复制到 initramfs，提取后续阶段需要的文件，然后释放 rootfs
 cp "${VMLINUZ}"   "${BUILD_DIR}/vmlinuz"
-cp "${SHIM_SRC}"  "${BUILD_DIR}/shim.efi"
 cp "${GRUB_SRC}"  "${BUILD_DIR}/grub.efi"
 VMLINUZ="${BUILD_DIR}/vmlinuz"
-SHIM_SRC="${BUILD_DIR}/shim.efi"
 GRUB_SRC="${BUILD_DIR}/grub.efi"
+
+if [[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]]; then
+    cp "${SHIM_SRC}"  "${BUILD_DIR}/shim.efi"
+    SHIM_SRC="${BUILD_DIR}/shim.efi"
+fi
 
 rm -rf "${ROOTFS_DIR}"
 
@@ -467,12 +475,18 @@ LABEL imgflash
 EOF
 fi
 
-# EFI 启动（Secure Boot 链：shim → GRUB → 内核）
+# EFI 启动
+# SB=1: shim → GRUB → 内核
+# SB=0: GRUB → 内核
 
 # 1. 先把文件集结到 ISO 根目录
 mkdir -p "${ISO_DIR}/EFI/BOOT"
-cp "${SHIM_SRC}" "${ISO_DIR}/EFI/BOOT/${EFI_SHIM_NAME}"
-cp "${GRUB_SRC}" "${ISO_DIR}/EFI/BOOT/${EFI_GRUB_NAME}"
+
+src="${GRUB_SRC}"
+[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && src="${SHIM_SRC}"
+
+cp "$src" "${ISO_DIR}/EFI/BOOT/${EFI_SHIM_NAME}"
+[[ "$src" == "$SHIM_SRC" ]] && cp "${GRUB_SRC}" "${ISO_DIR}/EFI/BOOT/${EFI_GRUB_NAME}"
 
 # 2. 完整菜单配置
 cat > "${ISO_DIR}/EFI/BOOT/grub.cfg" << EOF

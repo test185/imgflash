@@ -16,6 +16,10 @@ on:
       iso_name:
         description: '输出 ISO 文件名(留空则使用原始名称)'
         required: false
+      secure_boot:
+        description: '启用 Secure Boot'
+        type: boolean
+        default: false
       free_space:
         description: '释放 Action 空间'
         type: boolean
@@ -44,6 +48,10 @@ jobs:
 
       - name: "设置目标架构"
         run: sed -i "s/^ARCH=.*/ARCH=${{ github.event.inputs.arch }}/" build.env
+
+      - name: "设置 Secure Boot"
+        if: ${{ github.event.inputs.secure_boot == 'true' }}
+        run: sed -i 's/^ENABLE_SECURE_BOOT=.*/ENABLE_SECURE_BOOT=1/' build.env
 
       - name: "构建 Docker 镜像"
         run: docker build -t imgflash .
