@@ -29,9 +29,9 @@ ENV_FILE="${SCRIPT_DIR}/build.env"
 if [[ ! -f "${ENV_FILE}" ]]; then
     echo "错误：缺少配置文件 ${ENV_FILE}" >&2; exit 1
 fi
+
 # shellcheck disable=SC1090
 source "${ENV_FILE}"
-
 
 # --- 基础模块（所有场景必需） ---
 BASE_MODULES="${MOD_FILESYSTEM} ${MOD_NLS} ${MOD_ATA} ${MOD_USB} ${MOD_CDROM} ${MOD_INPUT}"
@@ -441,21 +441,24 @@ menuentry "ImgFlash" {
 }
 EOF
 
-# FAT EFI 启动镜像（按实际内容动态计算大小）
+# FAT EFI 启动镜像
 mkdir -p "${ISO_DIR}/boot/grub"
 
-EFI_FILES_SIZE=$(du -sc "${ISO_DIR}/EFI/BOOT/"* 2>/dev/null | tail -1 | awk '{print $1}')
-EFI_IMG_MB=$(( (EFI_FILES_SIZE / 1024 + 1 + 1) ))  # 数据 + FAT 开销，向上取整
-EFI_IMG_MB=$(( EFI_IMG_MB < 4 ? 4 : EFI_IMG_MB ))   # 最小 4MB
-dd if=/dev/zero of="${ISO_DIR}/boot/grub/efi.img" bs=1M count=${EFI_IMG_MB} 2>/dev/null
-mkfs.vfat -F 12 "${ISO_DIR}/boot/grub/efi.img" 2>/dev/null || \
-    mkfs.vfat -F 16 "${ISO_DIR}/boot/grub/efi.img" 2>/dev/null || \
-    mkfs.vfat -F 32 "${ISO_DIR}/boot/grub/efi.img" 2>/dev/null
+EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
 
-mmd -i "${ISO_DIR}/boot/grub/efi.img" ::EFI ::EFI/BOOT
-mcopy -i "${ISO_DIR}/boot/grub/efi.img" "${ISO_DIR}/EFI/BOOT/BOOTX64.EFI" "::EFI/BOOT/BOOTX64.EFI"
-mcopy -i "${ISO_DIR}/boot/grub/efi.img" "${ISO_DIR}/EFI/BOOT/grubx64.efi" "::EFI/BOOT/grubx64.efi"
-mcopy -i "${ISO_DIR}/boot/grub/efi.img" "${ISO_DIR}/EFI/BOOT/grub.cfg"    "::EFI/BOOT/grub.cfg"
+# 使用 -sk 确保输出单位为 KB；向上取整到 MB + FAT 开销
+EFI_FILES_KB=$(du -sk "${ISO_DIR}/EFI/BOOT/" 2>/dev/null | awk '{print $1}')
+EFI_FILES_KB=${EFI_FILES_KB:-0}
+EFI_IMG_MB=$(( (EFI_FILES_KB + 1023) / 1024 + 2 ))  # 向上取整 + 2MB FAT 开销
+EFI_IMG_MB=$(( EFI_IMG_MB < 4 ? 4 : EFI_IMG_MB ))   # 最小 4MB
+dd if=/dev/zero of="${EFI_IMG}" bs=1M count=${EFI_IMG_MB} 2>/dev/null
+# 最小 4MB 时 FAT16 即可；更大则回退 FAT32
+mkfs.vfat -F 16 "${EFI_IMG}" 2>/dev/null || mkfs.vfat -F 32 "${EFI_IMG}" 2>/dev/null
+
+mmd -i "${EFI_IMG}" ::EFI ::EFI/BOOT
+mcopy -i "${EFI_IMG}" "${ISO_DIR}/EFI/BOOT/BOOTX64.EFI" "::EFI/BOOT/BOOTX64.EFI"
+mcopy -i "${EFI_IMG}" "${ISO_DIR}/EFI/BOOT/grubx64.efi" "::EFI/BOOT/grubx64.efi"
+mcopy -i "${EFI_IMG}" "${ISO_DIR}/EFI/BOOT/grub.cfg"    "::EFI/BOOT/grub.cfg"
 
 echo "  Phase 5 完成。"
 
