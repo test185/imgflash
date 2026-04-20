@@ -486,7 +486,7 @@ src="${GRUB_SRC}"
 [[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && src="${SHIM_SRC}"
 
 cp "$src" "${ISO_DIR}/EFI/BOOT/${EFI_SHIM_NAME}"
-[[ "$src" == "$SHIM_SRC" ]] && cp "${GRUB_SRC}" "${ISO_DIR}/EFI/BOOT/${EFI_GRUB_NAME}"
+[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && cp "${GRUB_SRC}" "${ISO_DIR}/EFI/BOOT/${EFI_GRUB_NAME}"
 
 # 2. 完整菜单配置
 cat > "${ISO_DIR}/EFI/BOOT/grub.cfg" << EOF
