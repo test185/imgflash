@@ -495,7 +495,7 @@ FINAL_KB=$(( SOURCE_KB + 512 ))
 [[ ${FINAL_KB} -gt $((256 * 1024)) ]] && FINAL_KB=$((256 * 1024))
 echo "  EFI 镜像: ${FINAL_KB} KB"
 dd if=/dev/zero of="${EFI_IMG}" bs=1k count="${FINAL_KB}" 2>/dev/null
-mkfs.vfat -F 32 "${EFI_IMG}" >/dev/null
+mkfs.vfat -F 16 "${EFI_IMG}" >/dev/null
 
 mmd -i "${EFI_IMG}" ::EFI ::EFI/BOOT
 
