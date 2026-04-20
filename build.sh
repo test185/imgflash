@@ -83,7 +83,7 @@ ISOHDPFX_PATH=$(find /usr -name isohdpfx.bin 2>/dev/null | head -1)
 # 构建目录
 # ---------------------------------------------------------------------------
 BUILD_DIR="${SCRIPT_DIR}/build"
-DEBOOTSTRAP_DIR="${BUILD_DIR}/debootstrap"
+ROOTFS_DIR="${BUILD_DIR}/rootfs"
 INITRAMFS_DIR="${BUILD_DIR}/initramfs"
 ISO_DIR="${BUILD_DIR}/iso"
 OUTPUT_DIR="${SCRIPT_DIR}/output"
@@ -189,6 +189,15 @@ show_help() {
     echo "  -h, --help    显示此帮助"
 }
 
+disk_usage() {
+    local label="${1:-debug}"
+    local total=$(du -sh "${BUILD_DIR}" 2>/dev/null | awk '{print $1}')
+    local rootfs=$(du -sh "${ROOTFS_DIR}" 2>/dev/null | awk '{print $1}')
+    local initramfs=$(du -sh "${INITRAMFS_DIR}" 2>/dev/null | awk '{print $1}')
+    local iso=$(du -sh "${ISO_DIR}" 2>/dev/null | awk '{print $1}')
+    echo "  [磁盘占用:${label}] total=${total} rootfs=${rootfs} initramfs=${initramfs} iso=${iso}"
+}
+
 while [[ $# -gt 0 ]]; do
     case $1 in
         -i|--image)
@@ -261,13 +270,14 @@ echo ""
 # Phase 1: mmdebstrap 创建最小 Debian 环境
 # =============================================================================
 
-rm -rf "${DEBOOTSTRAP_DIR}"
+rm -rf "${ROOTFS_DIR}"
 
 echo "[Phase 1] mmdebstrap ${DEBIAN_SUITE} (${ARCH}) ..."
 mmdebstrap --variant=essential \
     --include="${SIGNED_PKGS}" \
-    "${DEBIAN_SUITE}" "${DEBOOTSTRAP_DIR}" "${DEBIAN_MIRROR}"
+    "${DEBIAN_SUITE}" "${ROOTFS_DIR}" "${DEBIAN_MIRROR}"
 
+disk_usage "Phase1_END"
 echo "  Phase 1 完成。"
 
 # =============================================================================
@@ -278,18 +288,18 @@ echo ""
 echo "[Phase 2] 提取组件 ..."
 
 # --- 签名内核 ---
-VMLINUZ=$(ls "${DEBOOTSTRAP_DIR}"/boot/vmlinuz-* 2>/dev/null | head -1)
+VMLINUZ=$(ls "${ROOTFS_DIR}"/boot/vmlinuz-* 2>/dev/null | head -1)
 if [[ -z "${VMLINUZ}" ]]; then
-    echo "错误：debootstrap 环境中未找到 vmlinuz" >&2; exit 1
+    echo "错误：rootfs 中未找到 vmlinuz" >&2; exit 1
 fi
 KVER=$(basename "${VMLINUZ}" | sed 's/^vmlinuz-//')
 echo "  内核版本：${KVER}"
 
 # --- shim + 签名 GRUB ---
-SHIM_SRC=$(find "${DEBOOTSTRAP_DIR}" -name "${SHIM_FIND}" 2>/dev/null | head -1)
-GRUB_SRC=$(find "${DEBOOTSTRAP_DIR}" -name "${GRUB_FIND}" 2>/dev/null | head -1)
+SHIM_SRC=$(find "${ROOTFS_DIR}" -name "${SHIM_FIND}" 2>/dev/null | head -1)
+GRUB_SRC=$(find "${ROOTFS_DIR}" -name "${GRUB_FIND}" 2>/dev/null | head -1)
 if [[ -z "${SHIM_SRC}" || -z "${GRUB_SRC}" ]]; then
-    echo "错误：debootstrap 环境中未找到 shim 或 GRUB" >&2; exit 1
+    echo "错误：rootfs 中未找到 shim 或 GRUB" >&2; exit 1
 fi
 
 # --- BusyBox（来自 busybox-static 包，静态链接） ---
@@ -298,10 +308,11 @@ if ! command -v busybox &>/dev/null; then
 fi
 echo "  BusyBox $(busybox --help 2>&1 | head -1 | awk '{print $NF}')"
 
-# 清理 debootstrap 的 apt 缓存
-rm -rf "${DEBOOTSTRAP_DIR}/var/lib/apt/lists"/* \
-       "${DEBOOTSTRAP_DIR}/var/cache/apt"/*
+# 清理 rootfs 的 apt 缓存
+rm -rf "${ROOTFS_DIR}/var/lib/apt/lists"/* \
+       "${ROOTFS_DIR}/var/cache/apt"/*
 
+disk_usage "Phase2_END"
 echo "  Phase 2 完成。"
 
 # =============================================================================
@@ -339,18 +350,18 @@ chmod +x "${INITRAMFS_DIR}/usr/bin/installer"
 # 精简内核模块
 echo "  精简内核模块 ..."
 
-MOD_SRC="${DEBOOTSTRAP_DIR}/lib/modules/${KVER}"
+MOD_SRC="${ROOTFS_DIR}/lib/modules/${KVER}"
 if [[ ! -d "${MOD_SRC}" ]]; then
     echo "错误：找不到内核模块目录 ${MOD_SRC}" >&2; exit 1
 fi
 
-depmod -b "${DEBOOTSTRAP_DIR}" "${KVER}"
+depmod -b "${ROOTFS_DIR}" "${KVER}"
 
 # 用 modprobe 解析所需模块及依赖
 echo "  正在解析模块依赖链 ..."
 NEEDED_FILES=""
 for mod in ${REQUIRED_MODULES}; do
-    deps=$(modprobe -d "${DEBOOTSTRAP_DIR}" -S "${KVER}" --show-depends "$mod" 2>/dev/null \
+    deps=$(modprobe -d "${ROOTFS_DIR}" -S "${KVER}" --show-depends "$mod" 2>/dev/null \
         | awk '/^insmod/ {print $2}')
     NEEDED_FILES="${NEEDED_FILES} ${deps}"
 done
@@ -375,7 +386,9 @@ for f in modules.builtin modules.builtin.modinfo modules.order; do
     [ -f "${MOD_SRC}/$f" ] && cp "${MOD_SRC}/$f" "${MOD_DEST}/"
 done
 
-# 模块已全部复制到 initramfs，提取后续阶段需要的文件，然后释放 debootstrap
+disk_usage "MODULES_COPIED"
+
+# 模块已全部复制到 initramfs，提取后续阶段需要的文件，然后释放 rootfs
 cp "${VMLINUZ}"   "${BUILD_DIR}/vmlinuz"
 cp "${SHIM_SRC}"  "${BUILD_DIR}/shim.efi"
 cp "${GRUB_SRC}"  "${BUILD_DIR}/grub.efi"
@@ -383,7 +396,8 @@ VMLINUZ="${BUILD_DIR}/vmlinuz"
 SHIM_SRC="${BUILD_DIR}/shim.efi"
 GRUB_SRC="${BUILD_DIR}/grub.efi"
 
-rm -rf "${DEBOOTSTRAP_DIR}"
+rm -rf "${ROOTFS_DIR}"
+disk_usage "ROOTFS_DELETED"
 
 depmod -b "${INITRAMFS_DIR}" "${KVER}"
 
@@ -400,8 +414,11 @@ cd "${SCRIPT_DIR}"
 INITRD_SIZE=$(ls -lh "${BUILD_DIR}/initrd.img" | awk '{print $5}')
 echo "  Initramfs 大小：${INITRD_SIZE}"
 
+disk_usage "INITRD_CREATED"
+
 # initramfs 打包完成，释放空间
 rm -rf "${INITRAMFS_DIR}"
+disk_usage "INITRAMFS_DELETED"
 
 echo "  Phase 3 完成。"
 
@@ -413,6 +430,7 @@ echo ""
 echo "[Phase 4] 打包镜像容器 ..."
 
 mv "${BUILD_DIR}/temp.img" "${BUILD_DIR}/image.img"
+disk_usage "IMAGE_MOVED"
 
 IMG_SIZE=$(ls -lh "${BUILD_DIR}/image.img" | awk '{print $5}')
 echo "  原始镜像大小：${IMG_SIZE}"
@@ -424,8 +442,11 @@ mksquashfs "${BUILD_DIR}/image.img" "${BUILD_DIR}/image.squashfs" \
 SQFS_SIZE=$(ls -lh "${BUILD_DIR}/image.squashfs" | awk '{print $5}')
 echo "  Squashfs 大小：${SQFS_SIZE}"
 
+disk_usage "SQUASHFS_CREATED"
+
 # 镜像源文件不再需要，释放空间
 rm -f "${BUILD_DIR}/image.img"
+disk_usage "IMAGE_DELETED"
 
 echo "  Phase 4 完成。"
 
@@ -440,6 +461,8 @@ mkdir -p "${ISO_DIR}/boot"
 mv "${VMLINUZ}" "${ISO_DIR}/boot/vmlinuz"
 mv "${BUILD_DIR}/initrd.img" "${ISO_DIR}/boot/initrd.img"
 mv "${BUILD_DIR}/image.squashfs" "${ISO_DIR}/image.squashfs"
+
+disk_usage "ISO_FILES_MOVED"
 
 # Syslinux（BIOS 启动，仅 amd64）
 if [[ "${HAS_BIOS}" -eq 1 ]]; then
@@ -510,6 +533,7 @@ mkfs.vfat -F 16 -s 1 "${EFI_IMG}" >/dev/null
 mmd -i "${EFI_IMG}" ::EFI
 mcopy -s -i "${EFI_IMG}" "${ISO_DIR}/EFI/BOOT" ::EFI
 
+disk_usage "EFI_IMG_CREATED"
 echo "  Phase 5 完成。"
 
 # =============================================================================
@@ -520,6 +544,8 @@ echo ""
 echo "[Phase 6] 生成 ISO ..."
 
 FINAL_ISO="${OUTPUT_DIR}/${ISO_NAME}.iso"
+
+disk_usage "BEFORE_XORRISO"
 
 if [[ "${HAS_BIOS}" -eq 1 ]]; then
     xorriso -as mkisofs \
@@ -554,6 +580,7 @@ fi
 
 # ISO 已生成，释放 ISO 目录空间
 rm -rf "${ISO_DIR}"
+disk_usage "BUILD_COMPLETE"
 
 # CI 用 sudo 构建时产物归 root，修正属主
 [ "$(uname)" = "Linux" ] && chown "$(id -u):$(id -g)" "${FINAL_ISO}" 2>/dev/null || true
