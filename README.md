@@ -33,19 +33,20 @@
 
 纯 initramfs-only，无 rootfs、无 overlayfs、无 init 切换：
 
-- **amd64**：UEFI Secure Boot + BIOS 双启动
-  - UEFI 链：shim（Microsoft 签名）→ GRUB（Debian 签名）→ vmlinuz（Debian 签名）
+- **amd64**：UEFI + BIOS 双启动
+  - UEFI 链（Secure Boot）：shim（Microsoft 签名）→ GRUB（Debian 签名）→ vmlinuz（Debian 签名）
+  - UEFI 链（非 Secure Boot）：GRUB → vmlinuz
   - BIOS 链：syslinux → vmlinuz
-- **arm64**：UEFI Secure Boot 单启动
-  - UEFI 链：shim → GRUB → vmlinuz
+- **arm64**：UEFI 单启动
+  - UEFI 链：同 amd64，按 Secure Boot 配置决定
 - **运行时**：initramfs `/init` → 加载模块/挂载介质 → exec `installer` → dd 写盘 → 重启
 
 ## 构建流程
 
 | 阶段 | 说明 |
 |------|------|
-| Phase 1 | mmdebstrap 创建最小 Debian 环境（含签名组件） |
-| Phase 2 | 提取签名内核 / shim / GRUB / BusyBox |
+| Phase 1 | mmdebstrap 创建最小 Debian 环境（含引导组件） |
+| Phase 2 | 提取内核 / shim（可选） / GRUB / BusyBox |
 | Phase 3 | 组装 initramfs（BusyBox + 内核模块 + 安装脚本） |
 | Phase 4 | 将镜像打包为 squashfs 容器（zstd 压缩） |
 | Phase 5 | 组装 ISO 文件系统结构（UEFI 引导 + 可选 BIOS 引导） |
@@ -98,8 +99,9 @@ docker run --rm --privileged \
 | `DEBIAN_SUITE` | Debian 套件版本 | `trixie` |
 | `VOLUME_LABEL` | ISO 卷标 | `IMGFLASH` |
 | `MOD_*` | 各组内核模块定义 | 见 build.env |
-| `INCLUDE_NVME` | NVMe 模块开关（0 禁用） | `1` |
-| `INCLUDE_VIRT` | 虚拟化模块开关（0 禁用） | `1` |
+| `INCLUDE_NVME` | NVMe 模块开关 | `1` |
+| `INCLUDE_VIRT` | 虚拟化模块开关 | `1` |
+| `ENABLE_SECURE_BOOT` | Secure Boot 支持 | `0` |
 | `BOOT_TIMEOUT` | 启动菜单超时（秒） | `3` |
 | `KERNEL_PARAMS` | 内核启动参数 | `quiet` |
 | `SCAN_TIMEOUT` | 启动时扫描介质的超时秒数 | `10` |
@@ -113,7 +115,8 @@ docker run --rm --privileged \
 2. 选择 "构建 ImgFlash 安装器 ISO" 工作流
 3. 选择目标架构（amd64 / arm64）
 4. 填入镜像下载地址和可选的 ISO 名称
-5. 构建完成后从 Artifacts 下载 ISO
+5. 按需启用 Secure Boot
+6. 构建完成后从 Artifacts 下载 ISO
 
 ## 安装器运行时
 
