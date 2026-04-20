@@ -486,11 +486,12 @@ menuentry "ImgFlash" {
 }
 EOF
 
-# 4. 制作 efi.img
+# 3. 制作 efi.img
+mkdir -p "${ISO_DIR}/boot/grub"
 EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
 SOURCE_KB=$(du -skL "${ISO_DIR}/EFI/BOOT" | awk '{print $1}')
-FINAL_KB=$(( SOURCE_KB + 2048 ))
-[[ ${FINAL_KB} -lt $((8 * 1024)) ]] && FINAL_KB=$((8 * 1024))
+FINAL_KB=$(( SOURCE_KB + 512 ))
+[[ ${FINAL_KB} -lt $((4 * 1024)) ]] && FINAL_KB=$((4 * 1024))
 [[ ${FINAL_KB} -gt $((256 * 1024)) ]] && FINAL_KB=$((256 * 1024))
 echo "  EFI 镜像: ${FINAL_KB} KB"
 dd if=/dev/zero of="${EFI_IMG}" bs=1k count="${FINAL_KB}" 2>/dev/null
