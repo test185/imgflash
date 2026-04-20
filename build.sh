@@ -391,7 +391,14 @@ cd "${SCRIPT_DIR}"
 INITRD_SIZE=$(ls -lh "${BUILD_DIR}/initrd.img" | awk '{print $5}')
 echo "  Initramfs 大小：${INITRD_SIZE}"
 
-# debootstrap 环境不再需要，释放空间
+# 从 debootstrap 中提取后续阶段需要的文件，然后释放空间
+cp "${VMLINUZ}"   "${BUILD_DIR}/vmlinuz"
+cp "${SHIM_SRC}"  "${BUILD_DIR}/shim.efi"
+cp "${GRUB_SRC}"  "${BUILD_DIR}/grub.efi"
+VMLINUZ="${BUILD_DIR}/vmlinuz"
+SHIM_SRC="${BUILD_DIR}/shim.efi"
+GRUB_SRC="${BUILD_DIR}/grub.efi"
+
 rm -rf "${DEBOOTSTRAP_DIR}" "${INITRAMFS_DIR}"
 
 echo "  Phase 3 完成。"
