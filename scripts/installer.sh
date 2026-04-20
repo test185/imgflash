@@ -221,9 +221,7 @@ main() {
                 if [ -n "$disk" ] && confirm "$disk"; then
                     if do_install "$disk"; then
                         echo ""
-                        echo "======================================"
-                        echo "       Installation Successful!       "
-                        echo "======================================"
+                        echo ">>>>> Installation Successful! <<<<<"
                         echo ""
 
                         echo "-------------------------------------------------"
