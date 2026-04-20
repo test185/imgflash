@@ -425,12 +425,20 @@ LABEL imgflash
 EOF
 
 # EFI 启动（Secure Boot 链：shim → GRUB → 内核）
-mkdir -p "${ISO_DIR}/EFI/BOOT"
 
+# 1. 先把文件集结到 ISO 根目录
+mkdir -p "${ISO_DIR}/EFI/BOOT"
 cp "${SHIM_SRC}" "${ISO_DIR}/EFI/BOOT/BOOTX64.EFI"
 cp "${GRUB_SRC}" "${ISO_DIR}/EFI/BOOT/grubx64.efi"
 
-# 主配置：放在 ISO 文件系统的标准路径
+# 2. 定位 ISO 根后加载主配置
+cat > "${ISO_DIR}/EFI/BOOT/grub.cfg" << EOF
+search --no-floppy --label --set=root '${VOLUME_LABEL}'
+set prefix=(\$root)/boot/grub
+configfile (\$root)/boot/grub/grub.cfg
+EOF
+
+# 3. 放在 ISO 文件系统的标准路径
 mkdir -p "${ISO_DIR}/boot/grub"
 cat > "${ISO_DIR}/boot/grub/grub.cfg" << EOF
 set timeout=3
@@ -442,30 +450,17 @@ menuentry "ImgFlash" {
 }
 EOF
 
-# efi.img 内的转发脚本：定位 ISO 根后加载主配置
-mkdir -p "${BUILD_DIR}/efi_temp/EFI/BOOT"
-cat > "${BUILD_DIR}/efi_temp/EFI/BOOT/grub.cfg" << EOF
-search --no-floppy --label --set=root '${VOLUME_LABEL}'
-set prefix=(\$root)/boot/grub
-configfile (\$root)/boot/grub/grub.cfg
-EOF
-
-# FAT EFI 启动镜像
+# 4. 计算大小
 EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
+EFI_SIZE_KB=$(du -sk "${ISO_DIR}/EFI/BOOT" | awk '{print $1}')
+EFI_IMG_MB=$(( (EFI_SIZE_KB + 1023) / 1024 + 2 ))
+[[ ${EFI_IMG_MB} -lt 4 ]] && EFI_IMG_MB=4
 
-# 使用 -sk 确保输出单位为 KB；向上取整到 MB + FAT 开销
-EFI_FILES_KB=$(du -sk "${ISO_DIR}/EFI/BOOT/" 2>/dev/null | awk '{print $1}')
-EFI_FILES_KB=${EFI_FILES_KB:-0}
-EFI_IMG_MB=$(( (EFI_FILES_KB + 1023) / 1024 + 2 ))  # 向上取整 + 2MB FAT 开销
-EFI_IMG_MB=$(( EFI_IMG_MB < 4 ? 4 : EFI_IMG_MB ))   # 最小 4MB
 dd if=/dev/zero of="${EFI_IMG}" bs=1M count=${EFI_IMG_MB} 2>/dev/null
-# 最小 4MB 时 FAT16 即可；更大则回退 FAT32
-mkfs.vfat -F 16 "${EFI_IMG}" 2>/dev/null || mkfs.vfat -F 32 "${EFI_IMG}" 2>/dev/null
+mkfs.vfat -F 16 "${EFI_IMG}" >/dev/null
 
-mmd -i "${EFI_IMG}" ::EFI ::EFI/BOOT
-mcopy -i "${EFI_IMG}" "${ISO_DIR}/EFI/BOOT/BOOTX64.EFI"         "::EFI/BOOT/BOOTX64.EFI"
-mcopy -i "${EFI_IMG}" "${ISO_DIR}/EFI/BOOT/grubx64.efi"         "::EFI/BOOT/grubx64.efi"
-mcopy -i "${EFI_IMG}" "${BUILD_DIR}/efi_temp/EFI/BOOT/grub.cfg" "::EFI/BOOT/grub.cfg"
+mmd -i "${EFI_IMG}" ::EFI
+mcopy -s -i "${EFI_IMG}" "${ISO_DIR}/EFI/BOOT" ::EFI
 
 echo "  Phase 5 完成。"
 
