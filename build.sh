@@ -298,6 +298,10 @@ if ! command -v busybox &>/dev/null; then
 fi
 echo "  BusyBox $(busybox --help 2>&1 | head -1 | awk '{print $NF}')"
 
+# 清理 debootstrap 的 apt 缓存
+rm -rf "${DEBOOTSTRAP_DIR}/var/lib/apt/lists"/* \
+       "${DEBOOTSTRAP_DIR}/var/cache/apt"/*
+
 echo "  Phase 2 完成。"
 
 # =============================================================================
@@ -340,10 +344,6 @@ if [[ ! -d "${MOD_SRC}" ]]; then
     echo "错误：找不到内核模块目录 ${MOD_SRC}" >&2; exit 1
 fi
 
-# 解压压缩模块为 .ko（BusyBox modprobe 不支持压缩模块）
-echo "  正在解压模块（压缩格式 → .ko）..."
-find "${MOD_SRC}" -name '*.ko.xz' -exec xz -d -q {} +
-
 depmod -b "${DEBOOTSTRAP_DIR}" "${KVER}"
 
 # 用 modprobe 解析所需模块及依赖
@@ -363,18 +363,27 @@ fi
 MOD_DEST="${INITRAMFS_DIR}/lib/modules/${KVER}"
 echo "  包含 $(echo "$NEEDED_FILES" | wc -l) 个模块（含依赖）"
 
-# 拷贝所需模块到 initramfs
 for mod_file in $NEEDED_FILES; do
     rel_path=$(echo "$mod_file" | sed "s|${MOD_SRC}/||")
     dest_dir="${MOD_DEST}/$(dirname "$rel_path")"
     mkdir -p "$dest_dir"
-    cp "$mod_file" "$dest_dir/"
+    xz -dc "$mod_file" > "${dest_dir}/$(basename "${rel_path%.xz}")"
 done
 
 # 拷贝模块元数据
 for f in modules.builtin modules.builtin.modinfo modules.order; do
     [ -f "${MOD_SRC}/$f" ] && cp "${MOD_SRC}/$f" "${MOD_DEST}/"
 done
+
+# 模块已全部复制到 initramfs，提取后续阶段需要的文件，然后释放 debootstrap
+cp "${VMLINUZ}"   "${BUILD_DIR}/vmlinuz"
+cp "${SHIM_SRC}"  "${BUILD_DIR}/shim.efi"
+cp "${GRUB_SRC}"  "${BUILD_DIR}/grub.efi"
+VMLINUZ="${BUILD_DIR}/vmlinuz"
+SHIM_SRC="${BUILD_DIR}/shim.efi"
+GRUB_SRC="${BUILD_DIR}/grub.efi"
+
+rm -rf "${DEBOOTSTRAP_DIR}"
 
 depmod -b "${INITRAMFS_DIR}" "${KVER}"
 
@@ -391,15 +400,8 @@ cd "${SCRIPT_DIR}"
 INITRD_SIZE=$(ls -lh "${BUILD_DIR}/initrd.img" | awk '{print $5}')
 echo "  Initramfs 大小：${INITRD_SIZE}"
 
-# 从 debootstrap 中提取后续阶段需要的文件，然后释放空间
-cp "${VMLINUZ}"   "${BUILD_DIR}/vmlinuz"
-cp "${SHIM_SRC}"  "${BUILD_DIR}/shim.efi"
-cp "${GRUB_SRC}"  "${BUILD_DIR}/grub.efi"
-VMLINUZ="${BUILD_DIR}/vmlinuz"
-SHIM_SRC="${BUILD_DIR}/shim.efi"
-GRUB_SRC="${BUILD_DIR}/grub.efi"
-
-rm -rf "${DEBOOTSTRAP_DIR}" "${INITRAMFS_DIR}"
+# initramfs 打包完成，释放空间
+rm -rf "${INITRAMFS_DIR}"
 
 echo "  Phase 3 完成。"
 
@@ -410,23 +412,20 @@ echo "  Phase 3 完成。"
 echo ""
 echo "[Phase 4] 打包镜像容器 ..."
 
-IMAGE_DIR="${BUILD_DIR}/image"
-mkdir -p "${IMAGE_DIR}"
+mv "${BUILD_DIR}/temp.img" "${BUILD_DIR}/image.img"
 
-mv "${BUILD_DIR}/temp.img" "${IMAGE_DIR}/image.img"
-
-IMG_SIZE=$(ls -lh "${IMAGE_DIR}/image.img" | awk '{print $5}')
+IMG_SIZE=$(ls -lh "${BUILD_DIR}/image.img" | awk '{print $5}')
 echo "  原始镜像大小：${IMG_SIZE}"
 
 echo "  创建 squashfs（zstd）..."
-mksquashfs "${IMAGE_DIR}" "${BUILD_DIR}/image.squashfs" \
+mksquashfs "${BUILD_DIR}/image.img" "${BUILD_DIR}/image.squashfs" \
     -comp zstd -Xcompression-level ${ZSTD_LEVEL} -no-progress -no-xattrs
 
 SQFS_SIZE=$(ls -lh "${BUILD_DIR}/image.squashfs" | awk '{print $5}')
 echo "  Squashfs 大小：${SQFS_SIZE}"
 
 # 镜像源文件不再需要，释放空间
-rm -rf "${IMAGE_DIR}"
+rm -f "${BUILD_DIR}/image.img"
 
 echo "  Phase 4 完成。"
 
