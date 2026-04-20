@@ -497,7 +497,7 @@ EOF
 EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
 SOURCE_KB=$(du -skL "${ISO_DIR}/EFI/BOOT" | awk '{print $1}')
 FINAL_KB=$(( SOURCE_KB + 2048 ))
-[[ ${FINAL_KB} -lt $((32 * 1024)) ]] && FINAL_KB=$((32 * 1024))
+[[ ${FINAL_KB} -lt $((8 * 1024)) ]] && FINAL_KB=$((8 * 1024))
 [[ ${FINAL_KB} -gt $((256 * 1024)) ]] && FINAL_KB=$((256 * 1024))
 echo "  EFI 镜像: ${FINAL_KB} KB"
 dd if=/dev/zero of="${EFI_IMG}" bs=1k count="${FINAL_KB}" 2>/dev/null
