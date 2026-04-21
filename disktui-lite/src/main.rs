@@ -1,12 +1,11 @@
-use std::io;
+use std::io::{self, Write};
 use std::time::Duration;
 
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
-use disktui_lite::app::{App, AppResult};
+use disktui_lite::app::{App, AppResult, ExitAction};
 use disktui_lite::handler::{handle_key_events, poll_dd_progress};
-#[cfg(target_os = "linux")]
 use disktui_lite::init;
 use disktui_lite::tui::Tui;
 use disktui_lite::ui;
@@ -24,8 +23,11 @@ fn main() -> AppResult<()> {
     }
 
     // Detect if we are PID 1 (running as init in initramfs)
+    let is_pid1 = cfg!(target_os = "linux") && std::process::id() == 1;
+
+    // Init phase (PID 1 only)
     #[cfg(target_os = "linux")]
-    if std::process::id() == 1 {
+    if is_pid1 {
         if let Err(e) = init::run_init() {
             init::emergency_shell(&format!("Init failed: {}", e));
         }
@@ -50,35 +52,85 @@ fn main() -> AppResult<()> {
         Err(e) => {
             // Restore terminal before printing error
             drop(tui);
+            if is_pid1 {
+                init::emergency_shell(&format!("Failed to initialize: {}", e));
+            }
             eprintln!("Failed to initialize: {}", e);
-            eprintln!("Dropping to shell.");
-            let _ = std::process::Command::new("/bin/sh").status();
-            return Ok(());
+            return Err(e);
         }
     };
 
-    while app.running {
-        tui.draw(|frame| ui::render(&mut app, frame))?;
+    loop {
+        // ── TUI main loop ────────────────────────────────────────────
+        while app.running {
+            tui.draw(|frame| ui::render(&mut app, frame))?;
 
-        // Poll dd progress
-        poll_dd_progress(&mut app);
+            // Poll dd progress
+            poll_dd_progress(&mut app);
 
-        // Handle input (100ms timeout = tick rate)
-        if crossterm::event::poll(Duration::from_millis(100))? {
-            if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
-                if key.kind == crossterm::event::KeyEventKind::Press {
-                    let _ = handle_key_events(key, &mut app);
+            // Handle input (100ms timeout = tick rate)
+            if crossterm::event::poll(Duration::from_millis(100))? {
+                if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
+                    if key.kind == crossterm::event::KeyEventKind::Press {
+                        let _ = handle_key_events(key, &mut app);
+                    }
                 }
             }
+
+            app.tick();
         }
 
-        app.tick();
+        // ── Handle exit action ───────────────────────────────────────
+        match app.exit_action {
+            ExitAction::Shell => {
+                // Suspend TUI, drop to shell, then resume
+                tui.exit()?;
+                print!("\x1Bc");
+                println!("Type 'exit' to return to ImgFlash installer.");
+                io::stdout().flush().ok();
+                let _ = std::process::Command::new("/bin/sh").status();
+                // Re-enter TUI
+                tui.init()?;
+                app.running = true;
+                app.exit_action = ExitAction::None;
+                let _ = app.refresh_disks();
+            }
+            ExitAction::PowerOff => {
+                tui.exit()?;
+                print!("\x1Bc");
+                println!("Shutting down...");
+                io::stdout().flush().ok();
+                #[cfg(target_os = "linux")]
+                {
+                    nix::unistd::sync();
+                    let _ = nix::sys::reboot::reboot(nix::sys::reboot::RebootMode::RB_POWER_OFF);
+                }
+                // If poweroff failed and we're PID 1, must not exit
+                #[cfg(target_os = "linux")]
+                if is_pid1 {
+                    init::emergency_shell("Poweroff failed");
+                }
+                return Ok(());
+            }
+            ExitAction::Reboot => {
+                tui.exit()?;
+                print!("\x1Bc");
+                println!("Rebooting...");
+                io::stdout().flush().ok();
+                #[cfg(target_os = "linux")]
+                {
+                    nix::unistd::sync();
+                    let _ = nix::sys::reboot::reboot(nix::sys::reboot::RebootMode::RB_AUTOBOOT);
+                }
+                #[cfg(target_os = "linux")]
+                if is_pid1 {
+                    init::emergency_shell("Reboot failed");
+                }
+                return Ok(());
+            }
+            ExitAction::None => break,
+        }
     }
-
-    tui.exit()?;
-
-    // After TUI exits, drop to shell (like installer.sh's "0. Shell" option).
-    let _ = std::process::Command::new("/bin/sh").status();
 
     Ok(())
 }

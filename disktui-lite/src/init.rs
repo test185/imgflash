@@ -19,6 +19,8 @@ use anyhow::{bail, Context};
 pub fn run_init() -> anyhow::Result<()> {
     eprintln!("ImgFlash init starting...");
 
+    install_busybox()?;
+    setup_path();
     mount_virtual_fs()?;
     parse_cmdline()?;
     load_modules()?;
@@ -43,6 +45,28 @@ pub fn emergency_shell(msg: &str) -> ! {
 }
 
 // ── Implementation (Linux only) ─────────────────────────────────────────
+
+/// Install busybox symlinks (MUST be first — no other commands exist yet).
+#[cfg(target_os = "linux")]
+fn install_busybox() -> anyhow::Result<()> {
+    let status = std::process::Command::new("/bin/busybox")
+        .arg("--install")
+        .arg("-s")
+        .status()
+        .context("Failed to run busybox --install -s")?;
+    if !status.success() {
+        bail!("busybox --install -s failed with exit code {:?}", status.code());
+    }
+    Ok(())
+}
+
+/// Set up PATH so that modprobe, mount, etc. are discoverable.
+#[cfg(target_os = "linux")]
+fn setup_path() {
+    unsafe {
+        std::env::set_var("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
+    }
+}
 
 #[cfg(target_os = "linux")]
 fn mount_virtual_fs() -> anyhow::Result<()> {

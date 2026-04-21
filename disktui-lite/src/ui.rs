@@ -169,10 +169,10 @@ fn render_context_help(app: &App, frame: &mut Frame, area: Rect) {
             v.push(Span::from("Refresh | "));
             v.push(Span::from("s ").bold().yellow());
             v.push(Span::from("Shell | "));
-            v.push(Span::from("? ").bold().yellow());
-            v.push(Span::from("Help | "));
             v.push(Span::from("q ").bold().yellow());
-            v.push(Span::from("Quit"));
+            v.push(Span::from("Shut down | "));
+            v.push(Span::from("? ").bold().yellow());
+            v.push(Span::from("Help"));
             v
         }
         Screen::Confirmation => vec![
@@ -498,8 +498,8 @@ fn render_help_dialog(frame: &mut Frame) {
         Line::from("Actions:").bold().yellow(),
         Line::from("  r             - Refresh disk list"),
         Line::from("  s             - Drop to shell"),
+        Line::from("  q             - Shut down"),
         Line::from("  Esc / a       - Abort write operation"),
-        Line::from("  q             - Quit"),
         Line::from(""),
         Line::from("Confirmation:").bold().yellow(),
         Line::from("  ← → or Tab    - Toggle No/Yes"),

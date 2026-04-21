@@ -23,7 +23,7 @@ impl DiskInfo {
             return Ok(disks);
         }
 
-        let prefixes = ["sd", "nvme", "vd", "hd"];
+        let prefixes = ["sd", "nvme", "vd", "hd", "mmcblk"];
 
         for entry in fs::read_dir(sys_block)? {
             let entry = entry?;
@@ -102,6 +102,7 @@ impl DiskInfo {
             n if n.starts_with("nvme") => "NVMe",
             n if n.starts_with("sd") => "SSD/HDD",
             n if n.starts_with("vd") => "VirtIO",
+            n if n.starts_with("mmcblk") => "eMMC",
             n if n.starts_with("hd") => "IDE",
             _ => "Disk",
         }

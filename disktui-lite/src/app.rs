@@ -22,6 +22,17 @@ pub enum Screen {
     Success,
 }
 
+// ── Exit actions ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum ExitAction {
+    #[default]
+    None,
+    Shell,
+    PowerOff,
+    Reboot,
+}
+
 // ── Dialog states ───────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -185,6 +196,7 @@ pub struct App {
     pub show_help: bool,
     pub theme: Theme,
     pub tick_count: u64,
+    pub exit_action: ExitAction,
 }
 
 impl App {
@@ -211,6 +223,7 @@ impl App {
             show_help: false,
             theme: Theme::new(),
             tick_count: 0,
+            exit_action: ExitAction::None,
         })
     }
 
@@ -271,7 +284,8 @@ impl App {
                 self.reboot_last_tick = self.tick_count;
                 self.reboot_countdown -= 1;
                 if self.reboot_countdown == 0 {
-                    do_reboot();
+                    self.exit_action = ExitAction::Reboot;
+                    self.running = false;
                 }
             }
         }
@@ -320,8 +334,8 @@ impl App {
     }
 
     pub fn skip_reboot_countdown(&mut self) {
-        self.reboot_countdown = 0;
-        do_reboot();
+        self.exit_action = ExitAction::Reboot;
+        self.running = false;
     }
 
     pub fn quit(&mut self) {
@@ -329,18 +343,12 @@ impl App {
         if let Some(ref mut p) = self.progress {
             p.abort();
         }
+        self.exit_action = ExitAction::PowerOff;
         self.running = false;
     }
-}
 
-/// Sync filesystem buffers and reboot.
-#[cfg(target_os = "linux")]
-fn do_reboot() {
-    nix::unistd::sync();
-    let _ = nix::sys::reboot::reboot(nix::sys::reboot::RebootMode::RB_AUTOBOOT);
-}
-
-#[cfg(not(target_os = "linux"))]
-fn do_reboot() {
-    // Should never be called on non-Linux
+    pub fn drop_to_shell(&mut self) {
+        self.exit_action = ExitAction::Shell;
+        self.running = false;
+    }
 }

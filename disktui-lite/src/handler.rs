@@ -38,7 +38,7 @@ fn handle_disk_list(key: crossterm::event::KeyEvent, app: &mut App) -> anyhow::R
             }
         }
         KeyCode::Char('s') => {
-            app.quit();
+            app.drop_to_shell();
         }
         KeyCode::Down | KeyCode::Char('j') => {
             if !app.disks.is_empty() {

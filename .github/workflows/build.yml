@@ -20,6 +20,10 @@ on:
         description: '启用 Secure Boot'
         type: boolean
         default: false
+      use_tui:
+        description: '使用 TUI'
+        type: boolean
+        default: true
       free_space:
         description: '释放 Action 空间'
         type: boolean
@@ -57,27 +61,32 @@ jobs:
             Dockerfile
 
       - name: "安装 Rust 工具链"
+        if: ${{ github.event.inputs.use_tui == 'true' }}
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ env.TARGET }}
 
       - name: "安装 Zig"
+        if: ${{ github.event.inputs.use_tui == 'true' }}
         uses: mlugg/setup-zig@v2.1.0
         with:
           version: master
 
       - name: "安装 MUSL"
+        if: ${{ github.event.inputs.use_tui == 'true' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
 
       - name: "构建 disktui-lite"
+        if: ${{ github.event.inputs.use_tui == 'true' }}
         run: |
           cargo install --locked cargo-zigbuild
           cargo zigbuild --release --target ${{ env.TARGET }}
         working-directory: disktui-lite
 
       - name: "保存 disktui-lite"
+        if: ${{ github.event.inputs.use_tui == 'true' }}
         run: |
           mkdir -p ../binaries
           cp target/${{ env.TARGET }}/release/disktui-lite ../binaries/disktui-lite
@@ -90,12 +99,16 @@ jobs:
         if: ${{ github.event.inputs.secure_boot == 'true' }}
         run: sed -i 's/^ENABLE_SECURE_BOOT=.*/ENABLE_SECURE_BOOT=1/' build.env
 
+      - name: "设置安装器模式为 Shell"
+        if: ${{ github.event.inputs.use_tui != 'true' }}
+        run: sed -i 's/^USE_TUI=.*/USE_TUI=0/' build.env
+
       - name: "构建 Docker 镜像"
         run: docker build -t imgflash .
 
       - name: "构建 ISO"
         run: |
-          mkdir -p output
+          mkdir -p output binaries
           ARGS="-u ${{ github.event.inputs.download_url }}"
           if [ -n "${{ github.event.inputs.iso_name }}" ]; then
             ARGS="$ARGS -n ${{ github.event.inputs.iso_name }}"
