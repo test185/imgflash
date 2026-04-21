@@ -146,7 +146,7 @@ jobs:
           RELEASE_NAME: ${{ github.event.inputs.release_name }}
         with:
           tag_name: ${{ github.event.inputs.release_name }}-latest
-          release_name: ${{ github.event.inputs.release_name }} ISO (${{ github.event.inputs.arch }})
+          release_name: ${{ github.event.inputs.release_name }} ISO
           draft: false
           prerelease: false
           body: |
