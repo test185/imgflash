@@ -5,11 +5,17 @@ use ratatui::Terminal;
 use std::io;
 use std::panic;
 
-pub struct Tui<B: Backend> {
+pub struct Tui<B: Backend>
+where
+    <B as Backend>::Error: Send + Sync + 'static,
+{
     terminal: Terminal<B>,
 }
 
-impl<B: Backend> Tui<B> {
+impl<B: Backend> Tui<B>
+where
+    <B as Backend>::Error: Send + Sync + 'static,
+{
     pub fn new(terminal: Terminal<B>) -> Self {
         Self { terminal }
     }
