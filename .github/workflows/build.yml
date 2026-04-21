@@ -75,11 +75,12 @@ jobs:
         run: |
           cargo install --locked cargo-zigbuild
           cargo zigbuild --release --target ${{ env.TARGET }}
+        working-directory: disktui-lite
 
       - name: "保存 disktui-lite"
         run: |
           mkdir -p binaries
-          cp target/${{ env.TARGET }}/release/disktui-lite binaries/disktui-lite
+          cp target/${{ env.TARGET }}/release/disktui-lite ../binaries/disktui-lite
 
       - name: "设置目标架构"
         run: sed -i "s/^ARCH=.*/ARCH=${{ github.event.inputs.arch }}/" build.env
