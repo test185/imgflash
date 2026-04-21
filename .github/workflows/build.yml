@@ -25,6 +25,9 @@ on:
         type: boolean
         default: false
 
+env:
+  TARGET: ${{ github.event.inputs.arch == 'amd64' && 'x86_64-unknown-linux-musl' || 'aarch64-unknown-linux-musl' }}
+
 jobs:
   build:
     name: "构建 ISO (${{ github.event.inputs.arch }})"
@@ -45,6 +48,38 @@ jobs:
 
       - name: "检出仓库"
         uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            disktui-lite
+            build.sh
+            scripts
+            build.env
+            Dockerfile
+
+      - name: "安装 Rust 工具链"
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+
+      - name: "安装 Zig"
+        uses: mlugg/setup-zig@v2.1.0
+        with:
+          version: master
+
+      - name: "安装 MUSL"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: "构建 disktui-lite"
+        run: |
+          cargo install --locked cargo-zigbuild
+          cargo zigbuild --release --target ${{ env.TARGET }}
+
+      - name: "保存 disktui-lite"
+        run: |
+          mkdir -p binaries
+          cp target/${{ env.TARGET }}/release/disktui-lite binaries/disktui-lite
 
       - name: "设置目标架构"
         run: sed -i "s/^ARCH=.*/ARCH=${{ github.event.inputs.arch }}/" build.env
@@ -64,6 +99,7 @@ jobs:
             ARGS="$ARGS -n ${{ github.event.inputs.iso_name }}"
           fi
           docker run --rm --privileged \
+            -v "$(pwd)/binaries:/build/binaries" \
             -v "$(pwd)/output:/build/output" \
             imgflash $ARGS
 

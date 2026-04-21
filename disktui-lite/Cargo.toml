@@ -1,0 +1,23 @@
+[package]
+name = "disktui-lite"
+version = "1.0.0"
+edition = "2024"
+authors = ["ImgFlash Contributors"]
+description = "Lightweight TUI disk image installer for minimal initramfs environments"
+license = "MIT"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+anyhow = "1"
+nix = { version = "0.31", features = ["mount", "signal", "process", "reboot", "fs"] }
+uu_dd = "0.8"
+
+[[bin]]
+name = "disktui-lite"
+path = "src/main.rs"
+
+[profile.release]
+strip = true
+lto = "fat"
+codegen-units = 1

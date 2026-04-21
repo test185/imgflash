@@ -1,0 +1,568 @@
+use ratatui::{
+    Frame,
+    layout::{Alignment, Constraint, Direction, Flex, Layout, Rect},
+    style::{Color, Modifier, Style, Stylize},
+    text::{Line, Span},
+    widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table, Wrap},
+};
+
+use crate::app::{App, ConfirmButton, Screen};
+use crate::utils::format_bytes;
+
+pub fn render(app: &mut App, frame: &mut Frame) {
+    match app.screen {
+        Screen::DiskList => render_main(app, frame),
+        Screen::Confirmation => {
+            render_main(app, frame);
+            render_confirmation_dialog(app, frame);
+        }
+        Screen::Writing => {
+            render_main(app, frame);
+            render_progress_dialog(app, frame);
+        }
+        Screen::WriteError => {
+            render_main(app, frame);
+            render_write_error_dialog(app, frame);
+        }
+        Screen::Success => render_success_screen(app, frame),
+    }
+
+    if app.show_help {
+        render_help_dialog(frame);
+    }
+
+    for (index, notification) in app.notifications.iter().enumerate() {
+        render_notification(notification, index, frame);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Main disk list view
+// ═══════════════════════════════════════════════════════════════════════
+
+fn render_main(app: &mut App, frame: &mut Frame) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(8),
+            Constraint::Length(6),
+            Constraint::Length(1),
+        ])
+        .split(frame.area());
+
+    render_disks_table(app, frame, chunks[0]);
+    render_disk_summary(app, frame, chunks[1]);
+    render_context_help(app, frame, chunks[2]);
+}
+
+fn render_disks_table(app: &mut App, frame: &mut Frame, area: Rect) {
+    let focused = app.screen == Screen::DiskList;
+
+    if !app.has_disks() {
+        let block = Block::default()
+            .title(" Select Target Disk ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(app.theme.error))
+            .border_type(BorderType::Thick);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        let msg = Paragraph::new("No writable disks found!\n\nConnect a disk and press r to refresh.")
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+            .wrap(Wrap { trim: true });
+        frame.render_widget(msg, inner);
+        return;
+    }
+
+    let header_color = if focused { app.theme.header } else { Color::Reset };
+    let header = Row::new(vec![
+        Cell::from("Name").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
+        Cell::from("Size").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
+        Cell::from("Type").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
+        Cell::from("Model").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
+    ])
+    .bottom_margin(1);
+
+    let rows: Vec<Row> = app
+        .disks
+        .iter()
+        .map(|disk| {
+            Row::new(vec![
+                Cell::from(disk.name.clone()),
+                Cell::from(disk.size_str()),
+                Cell::from(disk.device_type().to_string()),
+                Cell::from(disk.model.clone()),
+            ])
+        })
+        .collect();
+
+    let widths = [
+        Constraint::Length(app.theme.disk_name_width),
+        Constraint::Length(app.theme.disk_size_width),
+        Constraint::Length(app.theme.disk_type_width),
+        Constraint::Min(app.theme.disk_model_width),
+    ];
+
+    let table = Table::new(rows, widths)
+        .header(header)
+        .block(
+            Block::default()
+                .title(" Select Target Disk ")
+                .borders(Borders::ALL)
+                .border_style(if focused {
+                    Style::default().fg(app.theme.focus_border)
+                } else {
+                    Style::default().fg(app.theme.normal_border)
+                })
+                .border_type(if focused { BorderType::Thick } else { BorderType::Plain }),
+        )
+        .column_spacing(2)
+        .row_highlight_style(if focused {
+            Style::default().bg(app.theme.highlight_bg).fg(app.theme.highlight_fg)
+        } else {
+            Style::default()
+        });
+
+    frame.render_stateful_widget(table, area, &mut app.disks_state);
+}
+
+fn render_disk_summary(app: &App, frame: &mut Frame, area: Rect) {
+    let text = if let Some(disk) = app.selected_disk() {
+        let status = if disk.is_mounted {
+            Span::styled("MOUNTED", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+        } else {
+            Span::styled("Unmounted", Style::default().fg(Color::Green))
+        };
+        let img_info = app.image_file_size()
+            .map(|s| format!(" | Image: {}", format_bytes(s)))
+            .unwrap_or_default();
+        Line::from(vec![
+            Span::styled(format!("{} ", disk.dev_path()), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::from(format!("| {} | {} | {} ", disk.size_str(), disk.device_type(), disk.model)),
+            Span::from("| Status: "),
+            status,
+            Span::from(img_info),
+        ])
+    } else {
+        Line::from("No disk selected")
+    };
+
+    let paragraph = Paragraph::new(text)
+        .block(Block::default().title(" Disk Info ").borders(Borders::ALL))
+        .alignment(Alignment::Center);
+    frame.render_widget(paragraph, area);
+}
+
+fn render_context_help(app: &App, frame: &mut Frame, area: Rect) {
+    let spans = match app.screen {
+        Screen::DiskList => {
+            let mut v = vec![
+                Span::from("j/k ").bold().yellow(),
+                Span::from("Navigate | "),
+            ];
+            if app.has_disks() && app.selected_disk().is_some() {
+                v.push(Span::from("Enter ").bold().yellow());
+                v.push(Span::from("Select | "));
+            }
+            v.push(Span::from("r ").bold().yellow());
+            v.push(Span::from("Refresh | "));
+            v.push(Span::from("s ").bold().yellow());
+            v.push(Span::from("Shell | "));
+            v.push(Span::from("? ").bold().yellow());
+            v.push(Span::from("Help | "));
+            v.push(Span::from("q ").bold().yellow());
+            v.push(Span::from("Quit"));
+            v
+        }
+        Screen::Confirmation => vec![
+            Span::from("←/→ ").bold().yellow(),
+            Span::from("Choose | "),
+            Span::from("Tab ").bold().yellow(),
+            Span::from("Toggle | "),
+            Span::from("Enter ").bold().yellow(),
+            Span::from("Confirm | "),
+            Span::from("Esc ").bold().yellow(),
+            Span::from("Back"),
+        ],
+        Screen::Writing => vec![
+            Span::from("Esc/a ").bold().yellow(),
+            Span::from("Abort write"),
+        ],
+        Screen::WriteError => vec![
+            Span::from("Enter/Esc ").bold().yellow(),
+            Span::from("Return to disk list"),
+        ],
+        Screen::Success => vec![
+            Span::from("Enter ").bold().yellow(),
+            Span::from("Reboot now | "),
+            Span::from("Rebooting...").style(Style::default().fg(Color::Cyan)),
+        ],
+    };
+    frame.render_widget(Line::from(spans).centered(), area);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Confirmation dialog
+// ═══════════════════════════════════════════════════════════════════════
+
+fn render_confirmation_dialog(app: &App, frame: &mut Frame) {
+    let disk = match app.selected_disk() {
+        Some(d) => d,
+        None => return,
+    };
+    let img_bytes = app.image_file_size().unwrap_or(0);
+
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Fill(1), Constraint::Length(12), Constraint::Fill(1)])
+        .split(frame.area());
+
+    let area = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Fill(1), Constraint::Length(60), Constraint::Fill(1)])
+        .split(popup_layout[1])[1];
+
+    let border_block = Block::default()
+        .title(" !! DANGEROUS OPERATION !! ")
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Thick)
+        .border_style(Style::default().fg(Color::Yellow));
+
+    let inner = border_block.inner(area);
+
+    let no_style = if app.confirm_button == ConfirmButton::No {
+        Style::default().bg(Color::DarkGray).fg(Color::White).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let yes_style = if app.confirm_button == ConfirmButton::Yes {
+        Style::default().bg(Color::Red).fg(Color::White).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Red)
+    };
+
+    let lines = vec![
+        Line::from(""),
+        Line::from("This will ERASE ALL DATA on the target disk!")
+            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Target: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{} ({})", disk.dev_path(), disk.size_str()), Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled("Image:  ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(format_bytes(img_bytes), Style::default().fg(Color::White)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled(" No ", no_style),
+            Span::raw("    "),
+            Span::styled(" Yes ", yes_style),
+        ])
+        .centered(),
+        Line::from(""),
+        Line::from("← → or Tab to select  |  Enter to confirm  |  Esc to cancel")
+            .style(Style::default().fg(Color::DarkGray))
+            .centered(),
+    ];
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(border_block, area);
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Progress dialog (real dd stats + EMA speed)
+// ═══════════════════════════════════════════════════════════════════════
+
+fn render_progress_dialog(app: &App, frame: &mut Frame) {
+    let progress = match &app.progress {
+        Some(p) => p,
+        None => return,
+    };
+
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Fill(1), Constraint::Length(12), Constraint::Fill(1)])
+        .split(frame.area());
+
+    let area = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Fill(1), Constraint::Length(64), Constraint::Fill(1)])
+        .split(popup_layout[1])[1];
+
+    let spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    let spinner = spinner_chars[progress.spinner_index];
+
+    let title = format!(
+        " {} Writing to /dev/{} ({}) ",
+        spinner, progress.disk_name, progress.disk_model,
+    );
+
+    let border_block = Block::default()
+        .title(title)
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Thick)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let inner = border_block.inner(area);
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(border_block, area);
+
+    let pct = progress.pct();
+    let pct_display = pct * 100.0;
+
+    // Progress bar
+    let bar_width = app.theme.progress_bar_width as usize;
+    let filled = (pct * bar_width as f64).round() as usize;
+    let filled = filled.min(bar_width);
+    let bar_str = format!(
+        "{}{}",
+        app.theme.progress_bar_filled.repeat(filled),
+        app.theme.progress_bar_empty.repeat(bar_width - filled),
+    );
+
+    let elapsed = progress.elapsed_secs();
+    let elapsed_min = elapsed / 60;
+    let elapsed_sec = elapsed % 60;
+
+    // ETA
+    let eta_line = if progress.speed_ema > 0.0 && progress.written_bytes < progress.total_bytes {
+        let remaining_bytes = progress.total_bytes - progress.written_bytes;
+        let remaining_secs = (remaining_bytes as f64) / (progress.speed_ema * 1048576.0);
+        let eta_min = (remaining_secs / 60.0) as u64;
+        let eta_sec = (remaining_secs % 60.0) as u64;
+        format!("  ETA: {:02}:{:02}", eta_min, eta_sec)
+    } else {
+        "  ETA: --:--".to_string()
+    };
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(format!(
+            "  {:.1}%  {}/{}  {:.1} MB/s  Elapsed: {:02}:{:02}{}",
+            pct_display,
+            format_bytes(progress.written_bytes),
+            format_bytes(progress.total_bytes),
+            progress.speed_ema,
+            elapsed_min, elapsed_sec,
+            eta_line,
+        ))
+        .style(Style::default().fg(Color::White)),
+        Line::from(""),
+        Line::from(format!("  {}", bar_str)).style(Style::default().fg(Color::Cyan)),
+        Line::from(""),
+        Line::from("  Please wait while the image is being written...")
+            .style(Style::default().fg(Color::DarkGray)),
+        Line::from("  Press Esc to abort and return to disk selection")
+            .style(Style::default().fg(Color::DarkGray)),
+    ];
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Write error dialog
+// ═══════════════════════════════════════════════════════════════════════
+
+fn render_write_error_dialog(app: &App, frame: &mut Frame) {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Fill(1), Constraint::Length(10), Constraint::Fill(1)])
+        .split(frame.area());
+
+    let area = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Fill(1), Constraint::Length(56), Constraint::Fill(1)])
+        .split(popup_layout[1])[1];
+
+    let border_block = Block::default()
+        .title(" Write Failed ")
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Thick)
+        .border_style(Style::default().fg(Color::Red));
+
+    let inner = border_block.inner(area);
+
+    let disk_info = app.progress.as_ref()
+        .map(|p| format!("/dev/{} ({})", p.disk_name, p.disk_model))
+        .unwrap_or_default();
+
+    let lines = vec![
+        Line::from(""),
+        Line::from("Installation failed!")
+            .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+            .centered(),
+        Line::from(""),
+        Line::from(format!("Target: {}", disk_info))
+            .style(Style::default().fg(Color::White))
+            .centered(),
+        Line::from(""),
+        Line::from("The disk may be damaged or the image was not written")
+            .style(Style::default().fg(Color::DarkGray))
+            .centered(),
+        Line::from("completely. Please verify and try again.")
+            .style(Style::default().fg(Color::DarkGray))
+            .centered(),
+        Line::from(""),
+        Line::from("Press Enter or Esc to return to disk list")
+            .style(Style::default().fg(Color::Yellow))
+            .centered(),
+    ];
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(border_block, area);
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Success / reboot screen
+// ═══════════════════════════════════════════════════════════════════════
+
+fn render_success_screen(app: &App, frame: &mut Frame) {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Fill(1), Constraint::Length(14), Constraint::Fill(1)])
+        .flex(Flex::SpaceBetween)
+        .split(frame.area());
+
+    let area = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Fill(1), Constraint::Length(56), Constraint::Fill(1)])
+        .split(popup_layout[1])[1];
+
+    let border_block = Block::default()
+        .title(" Installation Successful ")
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Thick)
+        .border_style(Style::default().fg(app.theme.success));
+
+    let inner = border_block.inner(area);
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(border_block, area);
+
+    let lines = vec![
+        Line::from(""),
+        Line::from("Image has been written successfully!")
+            .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+            .centered(),
+        Line::from(""),
+        Line::from("NOTICE BEFORE REBOOTING:")
+            .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            .centered(),
+        Line::from(""),
+        Line::from("  * Please REMOVE the USB drive or Disc.")
+            .style(Style::default().fg(Color::White)),
+        Line::from("  * Ensure media is removed to avoid boot loops.")
+            .style(Style::default().fg(Color::White)),
+        Line::from(""),
+        Line::from(format!("  Rebooting in {} seconds... (Enter to skip)", app.reboot_countdown))
+            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .centered(),
+        Line::from(""),
+    ];
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Help dialog
+// ═══════════════════════════════════════════════════════════════════════
+
+fn render_help_dialog(frame: &mut Frame) {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Fill(1), Constraint::Length(20), Constraint::Fill(1)])
+        .split(frame.area());
+
+    let area = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Fill(1), Constraint::Length(60), Constraint::Fill(1)])
+        .split(popup_layout[1])[1];
+
+    let help_text = vec![
+        Line::from("Navigation:").bold().yellow(),
+        Line::from("  j / ↓         - Scroll down"),
+        Line::from("  k / ↑         - Scroll up"),
+        Line::from("  Enter         - Select disk to write"),
+        Line::from(""),
+        Line::from("Actions:").bold().yellow(),
+        Line::from("  r             - Refresh disk list"),
+        Line::from("  s             - Drop to shell"),
+        Line::from("  Esc / a       - Abort write operation"),
+        Line::from("  q             - Quit"),
+        Line::from(""),
+        Line::from("Confirmation:").bold().yellow(),
+        Line::from("  ← → or Tab    - Toggle No/Yes"),
+        Line::from("  Enter         - Confirm selection"),
+        Line::from(""),
+        Line::from("Press any key to close").centered().italic(),
+    ];
+
+    let block = Paragraph::new(help_text)
+        .block(
+            Block::default()
+                .title(" IMG Installer - Help ")
+                .title_alignment(Alignment::Center)
+                .borders(Borders::ALL)
+                .border_type(BorderType::Thick)
+                .border_style(Style::default().fg(Color::Green)),
+        )
+        .style(Style::default().fg(Color::White));
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Toast notifications
+// ═══════════════════════════════════════════════════════════════════════
+
+fn render_notification(notification: &crate::notification::Notification, index: usize, frame: &mut Frame) {
+    use crate::notification::NotificationLevel;
+
+    let (color, title) = match notification.level {
+        NotificationLevel::Info => (Color::Green, "Info"),
+        NotificationLevel::Warning => (Color::Yellow, "Warning"),
+        NotificationLevel::Error => (Color::Red, "Error"),
+    };
+
+    let text = ratatui::text::Text::from(vec![
+        Line::from(title).style(Style::new().fg(color).add_modifier(Modifier::BOLD)),
+        Line::from(notification.message.as_str()),
+    ]);
+
+    let h = (text.height() as u16).saturating_add(2);
+    let w = (text.width() as u16).saturating_add(4).min(frame.area().width.saturating_sub(2));
+
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(h * index as u16), Constraint::Length(h), Constraint::Min(1)])
+        .split(frame.area());
+
+    let area = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(1), Constraint::Length(w), Constraint::Length(2)])
+        .split(popup_layout[1])[1];
+
+    let block = Paragraph::new(text)
+        .alignment(Alignment::Center)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Thick)
+                .border_style(Style::default().fg(color)),
+        );
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+}
