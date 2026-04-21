@@ -337,7 +337,7 @@ impl App {
 #[cfg(target_os = "linux")]
 fn do_reboot() {
     nix::unistd::sync();
-    let _ = nix::unistd::reboot(nix::unistd::RebootMode::LINUX_REBOOT_CMD_RESTART);
+    let _ = nix::sys::reboot::reboot(nix::sys::reboot::RebootMode::LINUX_REBOOT_CMD_RESTART);
 }
 
 #[cfg(not(target_os = "linux"))]

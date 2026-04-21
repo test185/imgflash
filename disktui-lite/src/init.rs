@@ -52,7 +52,7 @@ fn mount_virtual_fs() -> anyhow::Result<()> {
         let _ = fs::create_dir_all(dir);
     }
 
-    use nix::mount::{MsFlags, mount};
+    use nix::mount::MsFlags;
 
     // proc
     mount_fs("proc", "/proc", "proc",
