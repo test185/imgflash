@@ -18,20 +18,20 @@ emergency_shell() {
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 
 # --- Mount virtual filesystems ---
-mkdir -p /proc /sys /dev /run /tmp /media/cdrom /image
+mkdir -p /proc /sys /dev /run /tmp /media/cdrom /image \
+    /dev/pts /dev/shm /etc /root /var/log
 
 mount -t proc -o noexec,nosuid,nodev proc /proc
 mount -t sysfs -o noexec,nosuid,nodev sysfs /sys
-mount -t devtmpfs -o exec,nosuid,mode=0755 devtmpfs /dev 2>/dev/null \
-    || mount -t tmpfs -o exec,nosuid,mode=0755 tmpfs /dev
+mount -t devtmpfs -o exec,nosuid,mode=0755,size=2M devtmpfs /dev 2>/dev/null \
+    || mount -t tmpfs -o exec,nosuid,mode=0755,size=2M tmpfs /dev
 
-# devtmpfs 挂载后才能创建子挂载点
-mkdir -p /dev/pts /dev/shm
 mount -t devpts -o gid=5,mode=0620,noexec,nosuid devpts /dev/pts
 mount -t tmpfs -o nodev,nosuid,noexec shm /dev/shm
 
 [ -c /dev/null ] || mknod -m 666 /dev/null c 1 3
 [ -c /dev/kmsg ] || mknod -m 660 /dev/kmsg c 1 11
+[ -c /dev/ptmx ] || mknod -m 666 /dev/ptmx c 5 2
 
 ln -sf /proc/mounts /etc/mtab
 
@@ -54,8 +54,16 @@ while read mod; do
     modprobe "$mod" 2>/dev/null
 done < /etc/modules
 
+# VMware virtual SCSI drivers
+if grep -q VMware /sys/devices/virtual/dmi/id/sys_vendor 2>/dev/null; then
+    echo "VMware detected, loading virtual SCSI drivers..."
+    modprobe ata_piix 2>/dev/null
+    modprobe mptspi 2>/dev/null
+    modprobe sr_mod 2>/dev/null
+fi
+
 # --- Wait for block devices to settle ---
-sleep 2
+sleep 1
 
 # --- Scan for boot media (ISO9660 with image.squashfs) ---
 echo "Scanning for boot media..."
@@ -65,6 +73,13 @@ while [ $TRIES -lt 10 ]; do
     for dev in /dev/sr* /dev/sd* /dev/nvme* /dev/vd*; do
         [ -b "$dev" ] || continue
         if mount -t iso9660 -o ro "$dev" /media/cdrom 2>/dev/null; then
+            if [ -f /media/cdrom/image.squashfs ]; then
+                BOOT_DEV="$dev"
+                break 2
+            fi
+            umount /media/cdrom
+        fi
+        if mount -t vfat -o ro "$dev" /media/cdrom 2>/dev/null; then
             if [ -f /media/cdrom/image.squashfs ]; then
                 BOOT_DEV="$dev"
                 break 2

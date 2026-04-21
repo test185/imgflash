@@ -329,17 +329,30 @@ chmod +x "${INITRAMFS_DIR}/bin/busybox"
 # 创建 /bin/sh 符号链接（内核执行 /init 时需要解释器）
 ln -s busybox "${INITRAMFS_DIR}/bin/sh"
 
-# /init 和 /usr/bin/installer
-cp "${SCRIPT_DIR}/scripts/init.sh" "${INITRAMFS_DIR}/init"
-chmod +x "${INITRAMFS_DIR}/init"
+# --- 安装器 ---
+if [[ "${USE_TUI}" == "1" ]]; then
+    # TUI 模式：disktui-lite 同时充当 init 和安装器
+    if [[ ! -f "/build/binaries/disktui-lite" ]]; then
+        echo "错误：找不到 /build/binaries/disktui-lite，请先构建 disktui-lite" >&2; exit 1
+    fi
+    cp /build/binaries/disktui-lite "${INITRAMFS_DIR}/usr/bin/disktui-lite"
+    chmod +x "${INITRAMFS_DIR}/usr/bin/disktui-lite"
 
+    ln -s /usr/bin/disktui-lite "${INITRAMFS_DIR}/init"
+else
+    # Shell 模式：init.sh + installer.sh
+    cp "${SCRIPT_DIR}/scripts/init.sh" "${INITRAMFS_DIR}/init"
+    chmod +x "${INITRAMFS_DIR}/init"
+
+    sed -i "s/TRIES -lt 10/TRIES -lt ${SCAN_TIMEOUT}/" "${INITRAMFS_DIR}/init"
+    sed -i "s/after 10 seconds/after ${SCAN_TIMEOUT} seconds/" "${INITRAMFS_DIR}/init"
+
+    cp "${SCRIPT_DIR}/scripts/installer.sh" "${INITRAMFS_DIR}/usr/bin/installer"
+    chmod +x "${INITRAMFS_DIR}/usr/bin/installer"
+fi
+
+# 内核模块列表
 echo "${REQUIRED_MODULES}" | tr ' ' '\n' > "${INITRAMFS_DIR}/etc/modules"
-
-sed -i "s/TRIES -lt 10/TRIES -lt ${SCAN_TIMEOUT}/" "${INITRAMFS_DIR}/init"
-sed -i "s/after 10 seconds/after ${SCAN_TIMEOUT} seconds/" "${INITRAMFS_DIR}/init"
-
-cp "${SCRIPT_DIR}/scripts/installer.sh" "${INITRAMFS_DIR}/usr/bin/installer"
-chmod +x "${INITRAMFS_DIR}/usr/bin/installer"
 
 # 精简内核模块
 echo "  精简内核模块 ..."
@@ -489,9 +502,12 @@ cp "$src" "${ISO_DIR}/EFI/BOOT/${EFI_SHIM_NAME}"
 [[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && cp "${GRUB_SRC}" "${ISO_DIR}/EFI/BOOT/${EFI_GRUB_NAME}"
 
 # 2. 完整菜单配置
+TIMEOUT_STYLE=$([[ "${BOOT_TIMEOUT}" -eq 0 ]] && echo "hidden" || echo "menu")
+
 cat > "${ISO_DIR}/EFI/BOOT/grub.cfg" << EOF
 search --no-floppy --label --set=root ${VOLUME_LABEL}
 set timeout=${BOOT_TIMEOUT}
+set timeout_style=${TIMEOUT_STYLE}
 set default=0
 
 menuentry "ImgFlash" {
