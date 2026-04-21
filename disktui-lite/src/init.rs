@@ -16,7 +16,7 @@ const SCAN_INTERVAL_SECS: u64 = 1;
 const BOOT_MEDIA_DIR: &str = "/media/cdrom";
 const IMAGE_DIR: &str = "/image";
 const IMAGE_FILE: &str = "/image/image.img";
-const SQUASHFS_FILE: &str = "/image.squashfs";
+const SQUASHFS_FILE: &str = "/media/cdrom/image.squashfs";
 const DEVICE_PREFIXES: [&str; 4] = ["sr", "sd", "nvme", "vd"];
 
 // ── Public API ──────────────────────────────────────────────────────────
