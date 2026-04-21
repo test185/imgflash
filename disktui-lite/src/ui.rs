@@ -63,7 +63,7 @@ fn render_disks_table(app: &mut App, frame: &mut Frame, area: Rect) {
             .title(" Select Target Disk ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(app.theme.error))
-            .border_type(BorderType::Thick);
+            .border_type(BorderType::default());
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
@@ -92,8 +92,8 @@ fn render_disks_table(app: &mut App, frame: &mut Frame, area: Rect) {
         .map(|(i, disk)| {
             let selected = app.disks_state.selected() == Some(i);
             Row::new(vec![
-                Cell::from(if selected { "▶" } else { "" })
-                    .style(Style::default().fg(Color::Cyan)),
+                Cell::from(if selected { "  ▶" } else { "   " })
+                    .style(Style::default().fg(Color::Red)),
                 Cell::from(disk.name.clone()),
                 Cell::from(disk.size_str()),
                 Cell::from(disk.device_type().to_string()),
@@ -103,7 +103,7 @@ fn render_disks_table(app: &mut App, frame: &mut Frame, area: Rect) {
         .collect();
 
     let widths = [
-        Constraint::Length(2),
+        Constraint::Length(3),
         Constraint::Length(app.theme.disk_name_width),
         Constraint::Length(app.theme.disk_size_width),
         Constraint::Length(app.theme.disk_type_width),
@@ -121,7 +121,7 @@ fn render_disks_table(app: &mut App, frame: &mut Frame, area: Rect) {
                 } else {
                     Style::default().fg(app.theme.normal_border)
                 })
-                .border_type(if focused { BorderType::Thick } else { BorderType::default() }),
+                .border_type(BorderType::default()),
         )
         .column_spacing(2)
         .row_highlight_style(if focused {
@@ -246,7 +246,7 @@ fn render_confirmation_dialog(app: &App, frame: &mut Frame) {
         .title(" !! DANGEROUS OPERATION !! ")
         .title_alignment(Alignment::Center)
         .borders(Borders::ALL)
-        .border_type(BorderType::Thick)
+        .border_type(BorderType::default())
         .border_style(Style::default().fg(Color::Yellow));
 
     let inner = border_block.inner(area);
@@ -326,7 +326,7 @@ fn render_progress_dialog(app: &App, frame: &mut Frame) {
         .title(title)
         .title_alignment(Alignment::Center)
         .borders(Borders::ALL)
-        .border_type(BorderType::Thick)
+        .border_type(BorderType::default())
         .border_style(Style::default().fg(Color::Cyan));
 
     let inner = border_block.inner(area);
@@ -387,7 +387,7 @@ fn render_write_error_dialog(app: &App, frame: &mut Frame) {
         .title(" Write Failed ")
         .title_alignment(Alignment::Center)
         .borders(Borders::ALL)
-        .border_type(BorderType::Thick)
+        .border_type(BorderType::default())
         .border_style(Style::default().fg(Color::Red));
 
     let inner = border_block.inner(area);
@@ -443,7 +443,7 @@ fn render_success_screen(app: &App, frame: &mut Frame) {
         .title(" Installation Successful ")
         .title_alignment(Alignment::Center)
         .borders(Borders::ALL)
-        .border_type(BorderType::Thick)
+        .border_type(BorderType::default())
         .border_style(Style::default().fg(app.theme.success));
 
     let inner = border_block.inner(area);
@@ -562,7 +562,7 @@ fn render_help_dialog(frame: &mut Frame) {
                 .title(" IMG Installer - Help ")
                 .title_alignment(Alignment::Center)
                 .borders(Borders::ALL)
-                .border_type(BorderType::Thick)
+                .border_type(BorderType::default())
                 .border_style(Style::default().fg(Color::Green)),
         )
         .style(Style::default().fg(Color::White));
@@ -607,7 +607,7 @@ fn render_notification(notification: &crate::notification::Notification, index: 
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_type(BorderType::Thick)
+                .border_type(BorderType::default())
                 .border_style(Style::default().fg(color)),
         );
 
