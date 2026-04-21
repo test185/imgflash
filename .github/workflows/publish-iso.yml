@@ -138,9 +138,11 @@ jobs:
         with:
           context: .
           push: false
+          load: true
           tags: imgflash:latest
           cache-from: ${{ github.event.inputs.no_cache != 'true' && 'type=gha' || '' }}
           cache-to: ${{ github.event.inputs.no_cache != 'true' && 'type=gha,mode=max' || '' }}
+          no-cache: ${{ github.event.inputs.no_cache == 'true' }}
 
       - name: "构建 ISO"
         run: |
