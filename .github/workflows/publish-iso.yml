@@ -1,0 +1,124 @@
+name: "发布 ISO"
+
+on:
+  workflow_dispatch:
+    inputs:
+      download_url:
+        description: '磁盘镜像下载地址（支持 raw / gz / xz / bz2 / zip / 7z）'
+        required: true
+      arch:
+        description: '目标架构'
+        type: choice
+        options:
+          - amd64
+          - arm64
+        default: amd64
+      release_name:
+        description: '发布名称'
+        required: true
+      secure_boot:
+        description: '启用 Secure Boot'
+        type: boolean
+        default: false
+      free_space:
+        description: '释放 Action 空间'
+        type: boolean
+        default: false
+
+jobs:
+  build-and-publish:
+    name: "构建并发布 ISO (${{ github.event.inputs.arch }})"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "释放 Action 空间"
+        if: ${{ github.event.inputs.free_space == 'true' }}
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false
+          swap-storage: false
+
+      - name: "检出仓库"
+        uses: actions/checkout@v4
+
+      - name: "设置目标架构"
+        run: sed -i "s/^ARCH=.*/ARCH=${{ github.event.inputs.arch }}/" build.env
+
+      - name: "设置 Secure Boot"
+        if: ${{ github.event.inputs.secure_boot == 'true' }}
+        run: sed -i 's/^ENABLE_SECURE_BOOT=.*/ENABLE_SECURE_BOOT=1/' build.env
+
+      - name: "构建 Docker 镜像"
+        run: docker build -t imgflash .
+
+      - name: "构建 ISO"
+        run: |
+          mkdir -p output
+          docker run --rm --privileged \
+            -v "$(pwd)/output:/build/output" \
+            imgflash -u ${{ github.event.inputs.download_url }}
+
+      - name: "获取 ISO 文件名"
+        id: iso_file
+        run: |
+          ISO_FILE=$(ls output/*.iso 2>/dev/null | head -n 1)
+          echo "file=${ISO_FILE##*/}" >> $GITHUB_OUTPUT
+
+      - name: "打包为 ZIP"
+        id: zip_file
+        run: |
+          cd output
+          zip "${{ github.event.inputs.release_name }}.iso.zip" "${{ steps.iso_file.outputs.file }}"
+          echo "zip=${{ github.event.inputs.release_name }}.iso.zip" >> $GITHUB_OUTPUT
+
+      - name: "删除旧标签"
+        env:
+          RELEASE_NAME: ${{ github.event.inputs.release_name }}
+        run: |
+          TAG_NAME="${RELEASE_NAME}-latest"
+          EXISTING_TAG=$(git tag -l "$TAG_NAME" | head -n 1)
+          if [ -n "$EXISTING_TAG" ]; then
+            git push --delete origin "$TAG_NAME" || true
+            git tag -d "$TAG_NAME" || true
+          fi
+
+      - name: "创建新标签"
+        env:
+          RELEASE_NAME: ${{ github.event.inputs.release_name }}
+        run: |
+          TAG_NAME="${RELEASE_NAME}-latest"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG_NAME"
+          git push origin "$TAG_NAME"
+
+      - name: "创建 GitHub Release"
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_NAME: ${{ github.event.inputs.release_name }}
+        with:
+          tag_name: ${{ github.event.inputs.release_name }}-latest
+          release_name: ${{ github.event.inputs.release_name }} ISO (${{ github.event.inputs.arch }})
+          draft: false
+          prerelease: false
+          body: |
+            发布名称: ${{ github.event.inputs.release_name }}
+            架构: ${{ github.event.inputs.arch }}
+            Secure Boot: ${{ github.event.inputs.secure_boot == 'true' && '启用' || '未启用' }}
+
+      - name: "上传 ISO ZIP 产物"
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: output/${{ steps.zip_file.outputs.zip }}
+          asset_name: ${{ steps.zip_file.outputs.zip }}
+          asset_content_type: application/zip
