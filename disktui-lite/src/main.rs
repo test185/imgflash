@@ -6,6 +6,7 @@ use ratatui::Terminal;
 
 use disktui_lite::app::{App, AppResult, ExitAction};
 use disktui_lite::handler::{handle_key_events, poll_dd_progress};
+#[cfg(target_os = "linux")]
 use disktui_lite::init;
 use disktui_lite::tui::Tui;
 use disktui_lite::ui;
@@ -27,10 +28,8 @@ fn main() -> AppResult<()> {
 
     // Init phase (PID 1 only)
     #[cfg(target_os = "linux")]
-    if is_pid1 {
-        if let Err(e) = init::run_init() {
-            init::emergency_shell(&format!("Init failed: {}", e));
-        }
+    if is_pid1 && let Err(e) = init::run_init() {
+        init::emergency_shell(&format!("Init failed: {}", e));
     }
 
     // Ignore SIGINT: we handle abort via UI (Esc), not Ctrl+C.
@@ -50,9 +49,9 @@ fn main() -> AppResult<()> {
     let mut app = match App::new() {
         Ok(app) => app,
         Err(e) => {
-            // Restore terminal before printing error
             drop(tui);
             if is_pid1 {
+                #[cfg(target_os = "linux")]
                 init::emergency_shell(&format!("Failed to initialize: {}", e));
             }
             eprintln!("Failed to initialize: {}", e);
@@ -69,12 +68,11 @@ fn main() -> AppResult<()> {
             poll_dd_progress(&mut app);
 
             // Handle input (100ms timeout = tick rate)
-            if crossterm::event::poll(Duration::from_millis(100))? {
-                if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
-                    if key.kind == crossterm::event::KeyEventKind::Press {
-                        let _ = handle_key_events(key, &mut app);
-                    }
-                }
+            if crossterm::event::poll(Duration::from_millis(100))?
+                && let crossterm::event::Event::Key(key) = crossterm::event::read()?
+                && key.kind == crossterm::event::KeyEventKind::Press
+            {
+                let _ = handle_key_events(key, &mut app);
             }
 
             app.tick();

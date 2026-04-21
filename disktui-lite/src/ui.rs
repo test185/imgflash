@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table, Wrap},
 };
 
-use crate::app::{App, ConfirmButton, Screen, SuccessAction};
+use crate::app::{App, ConfirmButton, FocusedBlock, Screen, SuccessAction};
 use crate::utils::format_bytes;
 
 pub fn render(app: &mut App, frame: &mut Frame) {
@@ -56,7 +56,7 @@ fn render_main(app: &mut App, frame: &mut Frame) {
 }
 
 fn render_disks_table(app: &mut App, frame: &mut Frame, area: Rect) {
-    let focused = app.screen == Screen::DiskList;
+    let focused = app.focused_block == FocusedBlock::DiskList;
 
     if !app.has_disks() {
         let block = Block::default()
@@ -77,9 +77,9 @@ fn render_disks_table(app: &mut App, frame: &mut Frame, area: Rect) {
 
     let header_color = if focused { app.theme.header } else { Color::Reset };
     let header = Row::new(vec![
-        Cell::from("").style(Style::default().fg(header_color)),
         Cell::from("Name").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
         Cell::from("Size").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
+        Cell::from("Bus").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
         Cell::from("Type").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
         Cell::from("Model").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
     ])
@@ -88,24 +88,21 @@ fn render_disks_table(app: &mut App, frame: &mut Frame, area: Rect) {
     let rows: Vec<Row> = app
         .disks
         .iter()
-        .enumerate()
-        .map(|(i, disk)| {
-            let selected = app.disks_state.selected() == Some(i);
+        .map(|disk| {
             Row::new(vec![
-                Cell::from(if selected { "  ▶" } else { "   " })
-                    .style(Style::default().fg(Color::Red)),
                 Cell::from(disk.name.clone()),
                 Cell::from(disk.size_str()),
-                Cell::from(disk.device_type().to_string()),
+                Cell::from(disk.bus.clone()),
+                Cell::from(disk.disk_type.clone()),
                 Cell::from(disk.model.clone()),
             ])
         })
         .collect();
 
     let widths = [
-        Constraint::Length(3),
         Constraint::Length(app.theme.disk_name_width),
         Constraint::Length(app.theme.disk_size_width),
+        Constraint::Length(app.theme.disk_bus_width),
         Constraint::Length(app.theme.disk_type_width),
         Constraint::Min(app.theme.disk_model_width),
     ];
@@ -135,20 +132,20 @@ fn render_disks_table(app: &mut App, frame: &mut Frame, area: Rect) {
 
 fn render_disk_summary(app: &App, frame: &mut Frame, area: Rect) {
     let text = if let Some(disk) = app.selected_disk() {
-        let status = if disk.is_mounted {
-            Span::styled("MOUNTED", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+        let fixed_str = if disk.is_fixed { "Fixed" } else { "Removable" };
+        let mount_str = if disk.is_mounted {
+            if let Some(ref mp) = disk.mount_point {
+                format!("Mounted ({})", mp)
+            } else {
+                "Mounted".to_string()
+            }
         } else {
-            Span::styled("Unmounted", Style::default().fg(Color::Green))
+            "Unmounted".to_string()
         };
-        let img_info = app.image_file_size()
-            .map(|s| format!(" | Image: {}", format_bytes(s)))
-            .unwrap_or_default();
+
         Line::from(vec![
-            Span::styled(format!("{} ", disk.dev_path()), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::from(format!("| {} | {} | {} ", disk.size_str(), disk.device_type(), disk.model)),
-            Span::from("| Status: "),
-            status,
-            Span::from(img_info),
+            Span::from(format!("{} | {} | {} | {}", disk.vendor, disk.model, disk.dev_path(), fixed_str)),
+            Span::from(format!(" | {}", mount_str)),
         ])
     } else {
         Line::from("No disk selected")
@@ -341,7 +338,7 @@ fn render_progress_dialog(app: &App, frame: &mut Frame) {
     let filled = (pct * inner_width as f64).round() as usize;
     let filled = filled.min(inner_width);
     let bar_str = format!(
-        "{}{}",
+        "│{}{}│",
         app.theme.progress_bar_filled.repeat(filled),
         app.theme.progress_bar_empty.repeat(inner_width - filled),
     );
@@ -357,7 +354,7 @@ fn render_progress_dialog(app: &App, frame: &mut Frame) {
         ))
         .style(Style::default().fg(Color::White)),
         Line::from(""),
-        Line::from(format!("  {}", bar_str)).style(Style::default().fg(Color::Cyan)),
+        Line::from(bar_str).style(Style::default().fg(Color::Cyan)),
         Line::from(""),
         Line::from("  Please wait while the image is being written...")
             .style(Style::default().fg(Color::DarkGray)),
@@ -461,8 +458,6 @@ fn render_success_screen(app: &App, frame: &mut Frame) {
 
     let back_btn = if app.success_action == SuccessAction::Back && !app.reboot_counting {
         Span::styled(" Back ", Style::default().bg(Color::DarkGray).fg(Color::White).add_modifier(Modifier::BOLD))
-    } else if app.reboot_counting {
-        Span::styled(" Back ", Style::default().fg(Color::DarkGray))
     } else {
         Span::styled(" Back ", Style::default().fg(Color::DarkGray))
     };

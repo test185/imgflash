@@ -13,8 +13,11 @@ pub struct Theme {
 
     pub disk_name_width: u16,
     pub disk_size_width: u16,
+    pub disk_bus_width: u16,
     pub disk_type_width: u16,
     pub disk_model_width: u16,
+    pub disk_fixed_width: u16,
+    pub disk_mounted_width: u16,
 
     pub progress_bar_filled: &'static str,
     pub progress_bar_empty: &'static str,
@@ -34,8 +37,11 @@ impl Default for Theme {
 
             disk_name_width: 14,
             disk_size_width: 12,
-            disk_type_width: 10,
-            disk_model_width: 30,
+            disk_bus_width: 8,
+            disk_type_width: 6,
+            disk_model_width: 22,
+            disk_fixed_width: 10,
+            disk_mounted_width: 18,
 
             progress_bar_filled: "█",
             progress_bar_empty: "░",

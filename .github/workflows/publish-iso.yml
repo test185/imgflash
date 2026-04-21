@@ -38,6 +38,10 @@ on:
         description: '释放 Action 空间'
         type: boolean
         default: false
+      no_cache:
+        description: '不使用缓存，强制重新构建'
+        type: boolean
+        default: false
 
 env:
   TARGET: ${{ github.event.inputs.arch == 'amd64' && 'x86_64-unknown-linux-musl' || 'aarch64-unknown-linux-musl' }}
@@ -90,6 +94,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools
 
+      - name: "Rust 编译缓存"
+        if: ${{ github.event.inputs.use_tui == 'true' && github.event.inputs.no_cache != 'true' }}
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: disktui-lite
+
+      - name: "强制清理 Rust 编译缓存"
+        if: ${{ github.event.inputs.use_tui == 'true' && github.event.inputs.no_cache == 'true' }}
+        run: cargo clean
+        working-directory: disktui-lite
+
       - name: "构建 disktui-lite"
         if: ${{ github.event.inputs.use_tui == 'true' }}
         run: |
@@ -115,8 +130,17 @@ jobs:
         if: ${{ github.event.inputs.use_tui != 'true' }}
         run: sed -i 's/^USE_TUI=.*/USE_TUI=0/' build.env
 
+      - name: "设置 Docker Buildx"
+        uses: docker/setup-buildx-action@v3
+
       - name: "构建 Docker 镜像"
-        run: docker build -t imgflash .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: imgflash:latest
+          cache-from: ${{ github.event.inputs.no_cache != 'true' && 'type=gha' || '' }}
+          cache-to: ${{ github.event.inputs.no_cache != 'true' && 'type=gha,mode=max' || '' }}
 
       - name: "构建 ISO"
         run: |

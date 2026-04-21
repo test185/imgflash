@@ -8,9 +8,14 @@ use crate::utils::format_bytes;
 pub struct DiskInfo {
     pub name: String,       // e.g. "sda"
     pub size_bytes: u64,    // total size in bytes
+    pub vendor: String,
     pub model: String,
+    pub bus: String,        // SATA, USB, NVMe, VirtIO, eMMC
+    pub disk_type: String,  // SSD, HDD
+    pub is_fixed: bool,     // true = fixed, false = removable
     pub is_readonly: bool,
     pub is_mounted: bool,
+    pub mount_point: Option<String>,
 }
 
 impl DiskInfo {
@@ -34,10 +39,10 @@ impl DiskInfo {
                 continue;
             }
 
-            if let Some(disk) = Self::from_sys_block(&name) {
-                if !disk.is_readonly {
-                    disks.push(disk);
-                }
+            if let Some(disk) = Self::from_sys_block(&name)
+                && !disk.is_readonly
+            {
+                disks.push(disk);
             }
         }
 
@@ -64,51 +69,104 @@ impl DiskInfo {
             .unwrap_or(0);
         let size_bytes = sectors * 512;
 
+        let vendor = fs::read_to_string(base.join("device/vendor"))
+            .unwrap_or_else(|_| "Unknown".to_string())
+            .trim()
+            .to_string();
+
         let model = fs::read_to_string(base.join("device/model"))
             .or_else(|_| fs::read_to_string(base.join("device/name")))
             .unwrap_or_else(|_| "Unknown".to_string())
             .trim()
             .to_string();
 
-        let is_mounted = Self::check_mounted(name);
+        let removable: u8 = fs::read_to_string(base.join("removable"))
+            .unwrap_or_else(|_| "0".to_string())
+            .trim()
+            .parse()
+            .unwrap_or(0);
+        let is_fixed = removable == 0;
+
+        let (is_mounted, mount_point) = Self::check_mounted(name);
+
+        let bus = Self::detect_bus(name);
+        let disk_type = Self::detect_disk_type(&base);
 
         Some(Self {
             name: name.to_string(),
             size_bytes,
+            vendor,
             model,
+            bus,
+            disk_type,
+            is_fixed,
             is_readonly,
             is_mounted,
+            mount_point,
         })
     }
 
+    fn detect_disk_type(base: &Path) -> String {
+        let rotational: u8 = fs::read_to_string(base.join("queue/rotational"))
+            .unwrap_or_else(|_| "0".to_string())
+            .trim()
+            .parse()
+            .unwrap_or(0);
+        if rotational == 0 { "SSD".to_string() } else { "HDD".to_string() }
+    }
+
+    fn detect_bus(name: &str) -> String {
+        if name.starts_with("nvme") {
+            "NVMe".to_string()
+        } else if name.starts_with("sd") {
+            "SATA".to_string()
+        } else if name.starts_with("vd") {
+            "VirtIO".to_string()
+        } else if name.starts_with("mmcblk") {
+            "eMMC".to_string()
+        } else if name.starts_with("hd") {
+            "IDE".to_string()
+        } else {
+            "Unknown".to_string()
+        }
+    }
+
     /// Check if the device or any of its partitions are mounted (via /proc/mounts).
-    fn check_mounted(name: &str) -> bool {
+    fn check_mounted(name: &str) -> (bool, Option<String>) {
         if let Ok(mounts) = fs::read_to_string("/proc/mounts") {
             for line in mounts.lines() {
                 if line.starts_with(&format!("/dev/{}", name)) {
-                    return true;
+                    if let Some(mount_point) = line.split_whitespace().nth(1) {
+                        return (true, Some(mount_point.to_string()));
+                    }
+                    return (true, None);
                 }
             }
         }
-        false
+        (false, None)
     }
 
     pub fn size_str(&self) -> String {
         format_bytes(self.size_bytes)
     }
 
-    pub fn device_type(&self) -> &str {
-        match &self.name {
-            n if n.starts_with("nvme") => "NVMe",
-            n if n.starts_with("sd") => "SSD/HDD",
-            n if n.starts_with("vd") => "VirtIO",
-            n if n.starts_with("mmcblk") => "eMMC",
-            n if n.starts_with("hd") => "IDE",
-            _ => "Disk",
-        }
-    }
-
     pub fn dev_path(&self) -> String {
         format!("/dev/{}", self.name)
+    }
+
+    pub fn fixed_str(&self) -> &'static str {
+        if self.is_fixed { "fixed" } else { "removable" }
+    }
+
+    pub fn mounted_str(&self) -> String {
+        if self.is_mounted {
+            if let Some(ref mp) = self.mount_point {
+                format!("mounted ({})", mp)
+            } else {
+                "mounted".to_string()
+            }
+        } else {
+            "unmounted".to_string()
+        }
     }
 }

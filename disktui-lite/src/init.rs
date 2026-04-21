@@ -1,26 +1,30 @@
-/// Init phase: replaces scripts/init.sh
-///
-/// This code only runs on Linux (initramfs). It is gated behind
-/// `is_pid1` detection in main.rs, but must still compile on the
-/// build host (which may be Windows/macOS during cross-compilation setup).
+//! Init phase: replaces scripts/init.sh
+//!
+//! Design philosophy: "brute force + trial-and-error" over "correct modeling".
+//! Don't try to understand the hardware. Just try everything until something works.
+//! This runs on Linux only (initramfs), gated behind `is_pid1` detection in main.rs.
 
-#[cfg(target_os = "linux")]
 use std::fs;
-#[cfg(target_os = "linux")]
 use std::path::Path;
 
-#[cfg(target_os = "linux")]
-use anyhow::{bail, Context};
+use anyhow::bail;
+
+// ── Constants ───────────────────────────────────────────────────────────
+
+const MAX_SCAN_TRIES: u32 = 10;
+const SCAN_INTERVAL_SECS: u64 = 1;
+const BOOT_MEDIA_DIR: &str = "/media/cdrom";
+const IMAGE_DIR: &str = "/image";
+const IMAGE_FILE: &str = "/image/image.img";
+const SQUASHFS_FILE: &str = "/image.squashfs";
+const DEVICE_PREFIXES: [&str; 4] = ["sr", "sd", "nvme", "vd"];
 
 // ── Public API ──────────────────────────────────────────────────────────
 
-/// Run the init phase. Returns Ok(()) if everything is set up.
-#[cfg(target_os = "linux")]
 pub fn run_init() -> anyhow::Result<()> {
     eprintln!("ImgFlash init starting...");
 
     install_busybox()?;
-    setup_path();
     mount_virtual_fs()?;
     parse_cmdline()?;
     load_modules()?;
@@ -31,12 +35,6 @@ pub fn run_init() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_os = "linux"))]
-pub fn run_init() -> anyhow::Result<()> {
-    anyhow::bail!("Init is only supported on Linux")
-}
-
-/// Drop to emergency shell with a message.
 pub fn emergency_shell(msg: &str) -> ! {
     eprintln!("ERROR: {}", msg);
     eprintln!("Dropping to emergency shell.");
@@ -44,128 +42,84 @@ pub fn emergency_shell(msg: &str) -> ! {
     std::process::exit(1);
 }
 
-// ── Implementation (Linux only) ─────────────────────────────────────────
+// ── Phase 1: Bootstrap ─────────────────────────────────────────────────
 
-/// Install busybox symlinks (MUST be first — no other commands exist yet).
-#[cfg(target_os = "linux")]
 fn install_busybox() -> anyhow::Result<()> {
     let status = std::process::Command::new("/bin/busybox")
         .arg("--install")
         .arg("-s")
-        .status()
-        .context("Failed to run busybox --install -s")?;
+        .status()?;
     if !status.success() {
-        bail!("busybox --install -s failed with exit code {:?}", status.code());
+        bail!("busybox --install failed");
     }
-    Ok(())
-}
-
-/// Set up PATH so that modprobe, mount, etc. are discoverable.
-#[cfg(target_os = "linux")]
-fn setup_path() {
     unsafe {
         std::env::set_var("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
     }
+    Ok(())
 }
 
-#[cfg(target_os = "linux")]
+// ── Phase 2: Virtual Filesystems ────────────────────────────────────────
+
 fn mount_virtual_fs() -> anyhow::Result<()> {
-    // Create mount points
-    for dir in &["/proc", "/sys", "/dev", "/run", "/tmp", "/media/cdrom", "/image",
-                 "/dev/pts", "/dev/shm", "/etc", "/root", "/var/log"] {
+    let dirs = &["/proc", "/sys", "/dev", "/run", "/tmp", BOOT_MEDIA_DIR, IMAGE_DIR,
+                 "/dev/pts", "/dev/shm", "/etc", "/root", "/var/log"];
+    for dir in dirs {
         let _ = fs::create_dir_all(dir);
     }
 
-    use nix::mount::MsFlags;
+    use nix::mount::{mount, MsFlags};
 
-    // proc
-    mount_fs("proc", "/proc", "proc",
-             MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
-             None)?;
+    let _ = mount::<str, str, str, str>(Some("proc"), "/proc", Some("proc"),
+        MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV, None);
 
-    // sysfs
-    mount_fs("sysfs", "/sys", "sysfs",
-             MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
-             None)?;
+    let _ = mount::<str, str, str, str>(Some("sysfs"), "/sys", Some("sysfs"),
+        MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV, None);
 
-    // devtmpfs with fallback to tmpfs
-    mount_fs("devtmpfs", "/dev", "devtmpfs",
-             MsFlags::MS_NOSUID,
-             Some("mode=0755"))
-        .or_else(|_| {
-            eprintln!("devtmpfs unavailable, falling back to tmpfs");
-            mount_fs("tmpfs", "/dev", "tmpfs",
-                     MsFlags::MS_NOSUID,
-                     Some("mode=0755"))
-        })?;
+    let dev_result = mount::<str, str, str, str>(Some("devtmpfs"), "/dev", Some("devtmpfs"),
+        MsFlags::MS_NOSUID, Some("mode=0755"));
+    if dev_result.is_err() {
+        eprintln!("devtmpfs unavailable, using tmpfs");
+        let _ = mount::<str, str, str, str>(Some("tmpfs"), "/dev", Some("tmpfs"),
+            MsFlags::MS_NOSUID, Some("mode=0755"));
+    }
 
-    // devpts
-    fs::create_dir_all("/dev/pts").ok();
-    mount_fs("devpts", "/dev/pts", "devpts",
-             MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID,
-             Some("gid=5,mode=0620"))?;
+    let _ = mount::<str, str, str, str>(Some("devpts"), "/dev/pts", Some("devpts"),
+        MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID, Some("gid=5,mode=0620"));
 
-    // shm
-    fs::create_dir_all("/dev/shm").ok();
-    mount_fs("shm", "/dev/shm", "tmpfs",
-             MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC,
-             None)?;
+    let _ = mount::<str, str, str, str>(Some("tmpfs"), "/dev/shm", Some("tmpfs"),
+        MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC, None);
 
-    // Ensure essential device nodes
-    use nix::sys::stat::{Mode, SFlag, mknod};
+    use nix::sys::stat::{mknod, Mode, SFlag};
 
     if !Path::new("/dev/null").exists() {
-        let _ = mknod("/dev/null", SFlag::S_IFCHR, Mode::from_bits(0o666).unwrap(), nix::sys::stat::makedev(1, 3));
+        let _ = mknod("/dev/null", SFlag::S_IFCHR, Mode::from_bits(0o666).unwrap(),
+            nix::sys::stat::makedev(1, 3));
     }
     if !Path::new("/dev/kmsg").exists() {
-        let _ = mknod("/dev/kmsg", SFlag::S_IFCHR, Mode::from_bits(0o660).unwrap(), nix::sys::stat::makedev(1, 11));
+        let _ = mknod("/dev/kmsg", SFlag::S_IFCHR, Mode::from_bits(0o660).unwrap(),
+            nix::sys::stat::makedev(1, 11));
     }
 
-    // /etc/mtab -> /proc/mounts symlink
-    #[cfg(unix)]
-    {
-        let _ = std::os::unix::fs::symlink("/proc/mounts", "/etc/mtab");
-    }
+    let _ = std::os::unix::fs::symlink("/proc/mounts", "/etc/mtab");
 
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
-fn mount_fs(source: &str, target: &str, fstype: &str, flags: nix::mount::MsFlags, data: Option<&str>) -> anyhow::Result<()> {
-    nix::mount::mount(Some(source), target, Some(fstype), flags, data)
-        .or_else(|e| {
-            // If already mounted (EBUSY), that's fine
-            match e {
-                nix::errno::Errno::EBUSY => Ok(()),
-                _ => Err(e),
-            }
-        })
-        .map_err(|e| anyhow::anyhow!("mount {} on {} (type {}): {}", source, target, fstype, e))
-}
+// ── Phase 3: Kernel Command Line ───────────────────────────────────────
 
-#[cfg(target_os = "linux")]
 fn parse_cmdline() -> anyhow::Result<()> {
     if let Ok(cmdline) = fs::read_to_string("/proc/cmdline") {
         for opt in cmdline.split_whitespace() {
-            match opt {
-                "quiet" => {
-                    // Suppress kernel messages to console
-                    let _ = fs::write("/proc/sys/kernel/printk", "1\n");
-                }
-                "debug" => {
-                    #[allow(unsafe_code)]
-                    unsafe {
-                        std::env::set_var("DEBUG", "1");
-                    }
-                }
-                _ => {}
+            if opt == "quiet" {
+                let _ = fs::write("/proc/sys/kernel/printk", "1\n");
             }
         }
     }
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+// ── Phase 4: Load Kernel Modules ───────────────────────────────────────
+
 fn load_modules() -> anyhow::Result<()> {
     let modules_path = "/etc/modules";
     if !Path::new(modules_path).exists() {
@@ -174,124 +128,125 @@ fn load_modules() -> anyhow::Result<()> {
 
     eprintln!("Loading kernel modules...");
 
-    let content = fs::read_to_string(modules_path)
-        .context("Failed to read /etc/modules")?;
-
+    let content = fs::read_to_string(modules_path)?;
     for line in content.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        // modprobe silently ignores failures (same as init.sh)
-        let _ = std::process::Command::new("modprobe")
-            .arg(line)
-            .status();
+        let _ = std::process::Command::new("modprobe").arg(line).status();
     }
 
     Ok(())
 }
 
-/// Scan block devices for ISO9660 containing image.squashfs.
-#[cfg(target_os = "linux")]
+// ── Phase 5: Boot Media Scan (brute force) ────────────────────────────
+
 fn scan_and_mount_boot_media() -> anyhow::Result<()> {
-    // Wait for block devices to settle
     eprintln!("Scanning for boot media...");
-    std::thread::sleep(std::time::Duration::from_secs(2));
 
-    let scan_timeout = get_scan_timeout();
-    let mut tries = 0;
+    std::thread::sleep(std::time::Duration::from_secs(1));
 
-    while tries < scan_timeout {
-        for dev in enumerate_block_devices() {
-            if try_mount_boot_device(&dev) {
-                eprintln!("Boot media found: {}", dev);
+    for attempt in 0..MAX_SCAN_TRIES {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_secs(SCAN_INTERVAL_SECS));
+        }
+
+        let devices = enumerate_dev_devices();
+
+        for device in devices {
+            if try_boot_device(&device) {
+                eprintln!("Boot media found: {}", device);
                 return Ok(());
             }
         }
-        tries += 1;
-        std::thread::sleep(std::time::Duration::from_secs(1));
     }
 
-    bail!("Boot media not found after {} seconds", scan_timeout);
+    bail!("Boot media not found after {} seconds", MAX_SCAN_TRIES);
 }
 
-#[cfg(target_os = "linux")]
-fn get_scan_timeout() -> u64 {
-    std::env::var("SCAN_TIMEOUT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(10)
-}
-
-/// Enumerate block devices to scan, in priority order.
-#[cfg(target_os = "linux")]
-fn enumerate_block_devices() -> Vec<String> {
+fn enumerate_dev_devices() -> Vec<String> {
     let mut devices = Vec::new();
-    let prefixes = ["sr", "sd", "nvme", "vd"];
 
     if let Ok(entries) = fs::read_dir("/dev") {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if prefixes.iter().any(|p| name.starts_with(p)) {
-                devices.push(format!("/dev/{}", name));
+
+            for prefix in &DEVICE_PREFIXES {
+                if name.starts_with(prefix) {
+                    let device_path = format!("/dev/{}", name);
+                    if is_block_device(&device_path) {
+                        devices.push(device_path);
+                    }
+                    break;
+                }
             }
         }
     }
 
-    // Sort: sr* (optical) first, then sd*, nvme*, vd*
     devices.sort_by(|a, b| {
-        let a_prio = device_priority(a);
-        let b_prio = device_priority(b);
-        b_prio.cmp(&a_prio).then(a.cmp(b))
+        let a_is_sr = a.contains("sr");
+        let b_is_sr = b.contains("sr");
+        if a_is_sr != b_is_sr {
+            b_is_sr.cmp(&a_is_sr)
+        } else {
+            a.cmp(b)
+        }
     });
 
     devices
 }
 
-#[cfg(target_os = "linux")]
-fn device_priority(dev: &str) -> u8 {
-    if dev.contains("sr") { 4 }
-    else if dev.contains("sd") { 3 }
-    else if dev.contains("nvme") { 2 }
-    else if dev.contains("vd") { 1 }
-    else { 0 }
+fn is_block_device(path: &str) -> bool {
+    use nix::sys::stat::stat;
+    if let Ok(stat) = stat(path) {
+        let mode = stat.st_mode;
+        const S_IFMT: u32 = 0o170000;
+        const S_IFBLK: u32 = 0o060000;
+        (mode & S_IFMT) == S_IFBLK
+    } else {
+        false
+    }
 }
 
-/// Try to mount a device as ISO9660 and check for image.squashfs.
-#[cfg(target_os = "linux")]
-fn try_mount_boot_device(device: &str) -> bool {
-    use nix::mount::{MsFlags, mount, umount};
+fn try_boot_device(device: &str) -> bool {
+    use nix::mount::{mount, umount, MsFlags};
 
-    // Try mounting as ISO9660 read-only
-    if mount(Some(device), "/media/cdrom", Some("iso9660"), MsFlags::MS_RDONLY, None::<&str>).is_ok() {
-        if Path::new("/media/cdrom/image.squashfs").exists() {
-            // Found boot media! Mount squashfs.
-            if mount_squashfs() {
-                return true;
-            }
-            let _ = umount("/media/cdrom");
-        } else {
-            let _ = umount("/media/cdrom");
-        }
+    let _ = umount(BOOT_MEDIA_DIR);
+
+    if mount::<str, str, str, str>(Some(device), BOOT_MEDIA_DIR, Some("iso9660"),
+        MsFlags::MS_RDONLY, None).is_err()
+        && mount::<str, str, str, str>(Some(device), BOOT_MEDIA_DIR, Some("vfat"),
+            MsFlags::MS_RDONLY, None).is_err()
+    {
+        return false;
     }
+
+    if !Path::new(SQUASHFS_FILE).exists() {
+        let _ = umount(BOOT_MEDIA_DIR);
+        return false;
+    }
+
+    if mount_squashfs() {
+        return true;
+    }
+
+    let _ = umount(BOOT_MEDIA_DIR);
     false
 }
 
-/// Mount the squashfs image. Uses external `mount -o loop` because
-/// loop device setup requires complex ioctl handling that isn't worth
-/// reimplementing in pure Rust.
-#[cfg(target_os = "linux")]
 fn mount_squashfs() -> bool {
     std::process::Command::new("mount")
-        .args(["-t", "squashfs", "-o", "ro,loop", "/media/cdrom/image.squashfs", "/image"])
+        .args(["-t", "squashfs", "-o", "ro,loop", SQUASHFS_FILE, IMAGE_DIR])
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
 }
 
-#[cfg(target_os = "linux")]
+// ── Phase 6: Verify Image ───────────────────────────────────────────────
+
 fn verify_image() -> anyhow::Result<()> {
-    if !Path::new("/image/image.img").exists() {
+    if !Path::new(IMAGE_FILE).exists() {
         bail!("image.img not found in squashfs");
     }
     Ok(())

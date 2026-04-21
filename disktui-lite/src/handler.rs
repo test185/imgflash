@@ -84,14 +84,14 @@ fn try_select_disk(app: &mut App) {
         return;
     }
 
-    if let Some(img_size) = app.image_file_size() {
-        if disk.size_bytes < img_size {
-            app.notify(
-                "Disk is smaller than the image! Write will fail.",
-                crate::notification::NotificationLevel::Error,
-            );
-            return;
-        }
+    if let Some(img_size) = app.image_file_size()
+        && disk.size_bytes < img_size
+    {
+        app.notify(
+            "Disk is smaller than the image! Write will fail.",
+            crate::notification::NotificationLevel::Error,
+        );
+        return;
     }
 
     app.goto_confirmation();

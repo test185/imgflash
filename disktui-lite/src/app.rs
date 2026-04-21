@@ -21,6 +21,14 @@ pub enum Screen {
     Success,
 }
 
+// ── Focused block (which panel has focus) ──────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum FocusedBlock {
+    #[default]
+    DiskList,
+}
+
 // ── Exit actions ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -34,8 +42,9 @@ pub enum ExitAction {
 
 // ── Dialog states ───────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum ConfirmButton {
+    #[default]
     No,
     Yes,
 }
@@ -56,16 +65,11 @@ impl ConfirmButton {
     }
 }
 
-impl Default for ConfirmButton {
-    fn default() -> Self {
-        Self::No
-    }
-}
-
 // ── Success screen actions ──────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum SuccessAction {
+    #[default]
     Reboot,
     Back,
 }
@@ -76,12 +80,6 @@ impl SuccessAction {
             Self::Reboot => Self::Back,
             Self::Back => Self::Reboot,
         };
-    }
-}
-
-impl Default for SuccessAction {
-    fn default() -> Self {
-        Self::Reboot
     }
 }
 
@@ -141,12 +139,11 @@ impl WriteProgress {
             Err(_) => return self.written_bytes, // fallback: keep last value
         };
         for line in io_content.lines() {
-            if line.starts_with("wchar:") {
-                if let Some(val) = line.split_whitespace().nth(1) {
-                    if let Ok(n) = val.parse::<u64>() {
-                        return n;
-                    }
-                }
+            if line.starts_with("wchar:")
+                && let Some(val) = line.split_whitespace().nth(1)
+                && let Ok(n) = val.parse::<u64>()
+            {
+                return n;
             }
         }
         self.written_bytes
@@ -191,6 +188,7 @@ impl WriteProgress {
 pub struct App {
     pub running: bool,
     pub screen: Screen,
+    pub focused_block: FocusedBlock,
     pub disks: Vec<DiskInfo>,
     pub disks_state: TableState,
     pub confirm_button: ConfirmButton,
@@ -220,6 +218,7 @@ impl App {
         Ok(Self {
             running: true,
             screen: Screen::DiskList,
+            focused_block: FocusedBlock::DiskList,
             disks,
             disks_state,
             confirm_button: ConfirmButton::default(),
@@ -281,21 +280,21 @@ impl App {
         }
 
         // Rotate spinner when writing
-        if self.screen == Screen::Writing {
-            if let Some(ref mut p) = self.progress {
-                p.spinner_index = (p.spinner_index + 1) % 10;
-            }
+        if self.screen == Screen::Writing
+            && let Some(ref mut p) = self.progress
+        {
+            p.spinner_index = (p.spinner_index + 1) % 10;
         }
 
         // Reboot countdown (10 ticks = 1 second at 100ms poll)
-        if self.screen == Screen::Success && self.reboot_counting {
-            if self.tick_count - self.reboot_last_tick >= 10 && self.reboot_countdown > 0 {
-                self.reboot_last_tick = self.tick_count;
-                self.reboot_countdown -= 1;
-                if self.reboot_countdown == 0 {
-                    self.exit_action = ExitAction::Reboot;
-                    self.running = false;
-                }
+        if self.screen == Screen::Success && self.reboot_counting
+            && self.tick_count - self.reboot_last_tick >= 10 && self.reboot_countdown > 0
+        {
+            self.reboot_last_tick = self.tick_count;
+            self.reboot_countdown -= 1;
+            if self.reboot_countdown == 0 {
+                self.exit_action = ExitAction::Reboot;
+                self.running = false;
             }
         }
     }
