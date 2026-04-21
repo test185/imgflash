@@ -194,26 +194,14 @@ jobs:
           esac
           rm -f "${{ steps.iso_file.outputs.file }}"
 
-      - name: "删除旧标签"
+      - name: "删除旧版 Release 和 Tag"
         env:
           RELEASE_NAME: ${{ github.event.inputs.release_name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG_NAME="${RELEASE_NAME}-latest"
-          EXISTING_TAG=$(git tag -l "$TAG_NAME" | head -n 1)
-          if [ -n "$EXISTING_TAG" ]; then
-            git push --delete origin "$TAG_NAME" || true
-            git tag -d "$TAG_NAME" || true
-          fi
-
-      - name: "创建新标签"
-        env:
-          RELEASE_NAME: ${{ github.event.inputs.release_name }}
-        run: |
-          TAG_NAME="${RELEASE_NAME}-latest"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "$TAG_NAME"
-          git push origin "$TAG_NAME"
+          gh release delete "$TAG_NAME" -y || true
+          git push origin ":refs/tags/$TAG_NAME" || true
 
       - name: "创建 GitHub Release"
         id: create_release
