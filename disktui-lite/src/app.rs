@@ -1,6 +1,5 @@
 use std::fs;
 use std::process::Child;
-use std::time::Instant;
 
 use crate::disk::DiskInfo;
 use crate::notification::Notification;
@@ -63,6 +62,29 @@ impl Default for ConfirmButton {
     }
 }
 
+// ── Success screen actions ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SuccessAction {
+    Reboot,
+    Back,
+}
+
+impl SuccessAction {
+    pub fn toggle(&mut self) {
+        *self = match self {
+            Self::Reboot => Self::Back,
+            Self::Back => Self::Reboot,
+        };
+    }
+}
+
+impl Default for SuccessAction {
+    fn default() -> Self {
+        Self::Reboot
+    }
+}
+
 // ── Write progress tracking ─────────────────────────────────────────────
 
 #[derive(Debug)]
@@ -71,12 +93,9 @@ pub struct WriteProgress {
     pub disk_model: String,
     pub total_bytes: u64,
     pub written_bytes: u64,
-    /// Exponential moving average speed (MB/s), smoother than instantaneous.
-    pub speed_ema: f64,
-    pub start_time: Instant,
-    /// The dd child process handle.
+    /// Instantaneous speed in MB/s.
+    pub speed: f64,
     dd_child: Option<Child>,
-    /// PID of the dd child process (for /proc/$PID/io reads).
     dd_pid: u32,
     pub finished: bool,
     pub success: bool,
@@ -84,8 +103,6 @@ pub struct WriteProgress {
 }
 
 impl WriteProgress {
-    const SPEED_ALPHA: f64 = 0.3; // EMA smoothing factor
-
     pub fn new(disk: &DiskInfo, total_bytes: u64, child: Child) -> Self {
         let pid = child.id();
         Self {
@@ -93,8 +110,7 @@ impl WriteProgress {
             disk_model: disk.model.clone(),
             total_bytes,
             written_bytes: 0,
-            speed_ema: 0.0,
-            start_time: Instant::now(),
+            speed: 0.0,
             dd_child: Some(child),
             dd_pid: pid,
             finished: false,
@@ -103,21 +119,10 @@ impl WriteProgress {
         }
     }
 
-    pub fn elapsed_secs(&self) -> u64 {
-        self.start_time.elapsed().as_secs()
-    }
-
-    /// Update written bytes and EMA speed.
     pub fn update_progress(&mut self, new_written: u64, tick_interval_secs: f64) {
         if new_written > self.written_bytes {
             let delta = new_written - self.written_bytes;
-            let instant_speed = (delta as f64) / (tick_interval_secs * 1048576.0);
-            if self.speed_ema == 0.0 {
-                self.speed_ema = instant_speed;
-            } else {
-                self.speed_ema =
-                    Self::SPEED_ALPHA * instant_speed + (1.0 - Self::SPEED_ALPHA) * self.speed_ema;
-            }
+            self.speed = (delta as f64) / (tick_interval_secs * 1048576.0);
             self.written_bytes = new_written;
         }
     }
@@ -190,6 +195,8 @@ pub struct App {
     pub disks_state: TableState,
     pub confirm_button: ConfirmButton,
     pub progress: Option<WriteProgress>,
+    pub success_action: SuccessAction,
+    pub reboot_counting: bool,
     pub reboot_countdown: u8,
     pub reboot_last_tick: u64,
     pub notifications: Vec<Notification>,
@@ -217,6 +224,8 @@ impl App {
             disks_state,
             confirm_button: ConfirmButton::default(),
             progress: None,
+            success_action: SuccessAction::default(),
+            reboot_counting: false,
             reboot_countdown: Self::REBOOT_SECONDS,
             reboot_last_tick: 0,
             notifications: Vec::new(),
@@ -279,7 +288,7 @@ impl App {
         }
 
         // Reboot countdown (10 ticks = 1 second at 100ms poll)
-        if self.screen == Screen::Success {
+        if self.screen == Screen::Success && self.reboot_counting {
             if self.tick_count - self.reboot_last_tick >= 10 && self.reboot_countdown > 0 {
                 self.reboot_last_tick = self.tick_count;
                 self.reboot_countdown -= 1;
@@ -328,6 +337,8 @@ impl App {
     }
 
     pub fn goto_success(&mut self) {
+        self.success_action = SuccessAction::default();
+        self.reboot_counting = false;
         self.reboot_countdown = Self::REBOOT_SECONDS;
         self.reboot_last_tick = self.tick_count;
         self.screen = Screen::Success;

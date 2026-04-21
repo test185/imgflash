@@ -1,6 +1,6 @@
 use anyhow::Context;
 
-use crate::app::{App, ConfirmButton, Screen, WriteProgress};
+use crate::app::{App, ConfirmButton, Screen, SuccessAction, WriteProgress};
 
 pub fn handle_key_events(key: crossterm::event::KeyEvent, app: &mut App) -> anyhow::Result<()> {
     // Help overlay: any key dismisses
@@ -103,9 +103,6 @@ fn handle_confirmation(key: crossterm::event::KeyEvent, app: &mut App) -> anyhow
     use crossterm::event::KeyCode;
 
     match key.code {
-        KeyCode::Esc => {
-            app.goto_disk_list();
-        }
         KeyCode::Left | KeyCode::Char('h') => {
             app.confirm_button = ConfirmButton::No;
         }
@@ -164,8 +161,25 @@ fn handle_success(key: crossterm::event::KeyEvent, app: &mut App) -> anyhow::Res
     use crossterm::event::KeyCode;
 
     match key.code {
+        KeyCode::Left | KeyCode::Char('h') | KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => {
+            if !app.reboot_counting {
+                app.success_action.toggle();
+            }
+        }
         KeyCode::Enter => {
-            app.skip_reboot_countdown();
+            if !app.reboot_counting {
+                match app.success_action {
+                    SuccessAction::Reboot => {
+                        app.reboot_counting = true;
+                        app.reboot_last_tick = app.tick_count;
+                    }
+                    SuccessAction::Back => {
+                        app.goto_disk_list();
+                    }
+                }
+            } else {
+                app.skip_reboot_countdown();
+            }
         }
         _ => {}
     }

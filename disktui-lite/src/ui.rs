@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table, Wrap},
 };
 
-use crate::app::{App, ConfirmButton, Screen};
+use crate::app::{App, ConfirmButton, Screen, SuccessAction};
 use crate::utils::format_bytes;
 
 pub fn render(app: &mut App, frame: &mut Frame) {
@@ -77,6 +77,7 @@ fn render_disks_table(app: &mut App, frame: &mut Frame, area: Rect) {
 
     let header_color = if focused { app.theme.header } else { Color::Reset };
     let header = Row::new(vec![
+        Cell::from("").style(Style::default().fg(header_color)),
         Cell::from("Name").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
         Cell::from("Size").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
         Cell::from("Type").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
@@ -87,8 +88,12 @@ fn render_disks_table(app: &mut App, frame: &mut Frame, area: Rect) {
     let rows: Vec<Row> = app
         .disks
         .iter()
-        .map(|disk| {
+        .enumerate()
+        .map(|(i, disk)| {
+            let selected = app.disks_state.selected() == Some(i);
             Row::new(vec![
+                Cell::from(if selected { "▶" } else { "" })
+                    .style(Style::default().fg(Color::Cyan)),
                 Cell::from(disk.name.clone()),
                 Cell::from(disk.size_str()),
                 Cell::from(disk.device_type().to_string()),
@@ -98,6 +103,7 @@ fn render_disks_table(app: &mut App, frame: &mut Frame, area: Rect) {
         .collect();
 
     let widths = [
+        Constraint::Length(2),
         Constraint::Length(app.theme.disk_name_width),
         Constraint::Length(app.theme.disk_size_width),
         Constraint::Length(app.theme.disk_type_width),
@@ -115,11 +121,11 @@ fn render_disks_table(app: &mut App, frame: &mut Frame, area: Rect) {
                 } else {
                     Style::default().fg(app.theme.normal_border)
                 })
-                .border_type(if focused { BorderType::Thick } else { BorderType::Plain }),
+                .border_type(if focused { BorderType::Thick } else { BorderType::default() }),
         )
         .column_spacing(2)
         .row_highlight_style(if focused {
-            Style::default().bg(app.theme.highlight_bg).fg(app.theme.highlight_fg)
+            Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         });
@@ -193,11 +199,24 @@ fn render_context_help(app: &App, frame: &mut Frame, area: Rect) {
             Span::from("Enter/Esc ").bold().yellow(),
             Span::from("Return to disk list"),
         ],
-        Screen::Success => vec![
-            Span::from("Enter ").bold().yellow(),
-            Span::from("Reboot now | "),
-            Span::from("Rebooting...").style(Style::default().fg(Color::Cyan)),
-        ],
+        Screen::Success => {
+            if app.reboot_counting {
+                vec![
+                    Span::from("Enter ").bold().yellow(),
+                    Span::from("Skip countdown | "),
+                    Span::from("Rebooting...").style(Style::default().fg(Color::Cyan)),
+                ]
+            } else {
+                vec![
+                    Span::from("←/→ ").bold().yellow(),
+                    Span::from("Choose | "),
+                    Span::from("Tab ").bold().yellow(),
+                    Span::from("Toggle | "),
+                    Span::from("Enter ").bold().yellow(),
+                    Span::from("Confirm"),
+                ]
+            }
+        }
     };
     frame.render_widget(Line::from(spans).centered(), area);
 }
@@ -265,7 +284,7 @@ fn render_confirmation_dialog(app: &App, frame: &mut Frame) {
         ])
         .centered(),
         Line::from(""),
-        Line::from("← → or Tab to select  |  Enter to confirm  |  Esc to cancel")
+        Line::from("← → or Tab to select  |  Enter to confirm")
             .style(Style::default().fg(Color::DarkGray))
             .centered(),
     ];
@@ -318,41 +337,23 @@ fn render_progress_dialog(app: &App, frame: &mut Frame) {
     let pct = progress.pct();
     let pct_display = pct * 100.0;
 
-    // Progress bar
-    let bar_width = app.theme.progress_bar_width as usize;
-    let filled = (pct * bar_width as f64).round() as usize;
-    let filled = filled.min(bar_width);
+    let inner_width = inner.width.saturating_sub(2) as usize;
+    let filled = (pct * inner_width as f64).round() as usize;
+    let filled = filled.min(inner_width);
     let bar_str = format!(
         "{}{}",
         app.theme.progress_bar_filled.repeat(filled),
-        app.theme.progress_bar_empty.repeat(bar_width - filled),
+        app.theme.progress_bar_empty.repeat(inner_width - filled),
     );
-
-    let elapsed = progress.elapsed_secs();
-    let elapsed_min = elapsed / 60;
-    let elapsed_sec = elapsed % 60;
-
-    // ETA
-    let eta_line = if progress.speed_ema > 0.0 && progress.written_bytes < progress.total_bytes {
-        let remaining_bytes = progress.total_bytes - progress.written_bytes;
-        let remaining_secs = (remaining_bytes as f64) / (progress.speed_ema * 1048576.0);
-        let eta_min = (remaining_secs / 60.0) as u64;
-        let eta_sec = (remaining_secs % 60.0) as u64;
-        format!("  ETA: {:02}:{:02}", eta_min, eta_sec)
-    } else {
-        "  ETA: --:--".to_string()
-    };
 
     let lines = vec![
         Line::from(""),
         Line::from(format!(
-            "  {:.1}%  {}/{}  {:.1} MB/s  Elapsed: {:02}:{:02}{}",
+            "  {:.1}%  {}/{}  {:.1} MB/s",
             pct_display,
             format_bytes(progress.written_bytes),
             format_bytes(progress.total_bytes),
-            progress.speed_ema,
-            elapsed_min, elapsed_sec,
-            eta_line,
+            progress.speed,
         ))
         .style(Style::default().fg(Color::White)),
         Line::from(""),
@@ -450,26 +451,73 @@ fn render_success_screen(app: &App, frame: &mut Frame) {
     frame.render_widget(Clear, area);
     frame.render_widget(border_block, area);
 
-    let lines = vec![
-        Line::from(""),
-        Line::from("Image has been written successfully!")
-            .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+    let reboot_btn = if app.success_action == SuccessAction::Reboot && !app.reboot_counting {
+        Span::styled(" Reboot ", Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD))
+    } else if app.reboot_counting {
+        Span::styled(" Reboot ", Style::default().fg(Color::DarkGray))
+    } else {
+        Span::styled(" Reboot ", Style::default().fg(Color::Cyan))
+    };
+
+    let back_btn = if app.success_action == SuccessAction::Back && !app.reboot_counting {
+        Span::styled(" Back ", Style::default().bg(Color::DarkGray).fg(Color::White).add_modifier(Modifier::BOLD))
+    } else if app.reboot_counting {
+        Span::styled(" Back ", Style::default().fg(Color::DarkGray))
+    } else {
+        Span::styled(" Back ", Style::default().fg(Color::DarkGray))
+    };
+
+    let lines = if app.reboot_counting {
+        vec![
+            Line::from(""),
+            Line::from("Image has been written successfully!")
+                .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+                .centered(),
+            Line::from(""),
+            Line::from("NOTICE BEFORE REBOOTING:")
+                .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                .centered(),
+            Line::from(""),
+            Line::from("  * Please REMOVE the USB drive or Disc.")
+                .style(Style::default().fg(Color::White)),
+            Line::from("  * Ensure media is removed to avoid boot loops.")
+                .style(Style::default().fg(Color::White)),
+            Line::from(""),
+            Line::from(format!("  Rebooting in {} seconds... (Enter to skip)", app.reboot_countdown))
+                .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+                .centered(),
+            Line::from(""),
+        ]
+    } else {
+        vec![
+            Line::from(""),
+            Line::from("Image has been written successfully!")
+                .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+                .centered(),
+            Line::from(""),
+            Line::from("NOTICE BEFORE REBOOTING:")
+                .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                .centered(),
+            Line::from(""),
+            Line::from("  * Please REMOVE the USB drive or Disc.")
+                .style(Style::default().fg(Color::White)),
+            Line::from("  * Ensure media is removed to avoid boot loops.")
+                .style(Style::default().fg(Color::White)),
+            Line::from(""),
+            Line::from(vec![
+                Span::raw("  "),
+                reboot_btn,
+                Span::raw("    "),
+                back_btn,
+            ])
             .centered(),
-        Line::from(""),
-        Line::from("NOTICE BEFORE REBOOTING:")
-            .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
-            .centered(),
-        Line::from(""),
-        Line::from("  * Please REMOVE the USB drive or Disc.")
-            .style(Style::default().fg(Color::White)),
-        Line::from("  * Ensure media is removed to avoid boot loops.")
-            .style(Style::default().fg(Color::White)),
-        Line::from(""),
-        Line::from(format!("  Rebooting in {} seconds... (Enter to skip)", app.reboot_countdown))
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
-            .centered(),
-        Line::from(""),
-    ];
+            Line::from(""),
+            Line::from("  ← → or Tab to choose  |  Enter to confirm")
+                .style(Style::default().fg(Color::DarkGray))
+                .centered(),
+            Line::from(""),
+        ]
+    };
 
     frame.render_widget(Paragraph::new(lines), inner);
 }

@@ -502,9 +502,12 @@ cp "$src" "${ISO_DIR}/EFI/BOOT/${EFI_SHIM_NAME}"
 [[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && cp "${GRUB_SRC}" "${ISO_DIR}/EFI/BOOT/${EFI_GRUB_NAME}"
 
 # 2. 完整菜单配置
+TIMEOUT_STYLE=$([[ "${BOOT_TIMEOUT}" -eq 0 ]] && echo "hidden" || echo "menu")
+
 cat > "${ISO_DIR}/EFI/BOOT/grub.cfg" << EOF
 search --no-floppy --label --set=root ${VOLUME_LABEL}
 set timeout=${BOOT_TIMEOUT}
+set timeout_style=${TIMEOUT_STYLE}
 set default=0
 
 menuentry "ImgFlash" {
