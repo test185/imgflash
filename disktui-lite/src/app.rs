@@ -149,6 +149,31 @@ impl WriteProgress {
         self.written_bytes
     }
 
+    /// Atomically check process status and read IO bytes to avoid PID reuse race.
+    pub fn check_and_read_io(&mut self) -> (Option<bool>, u64) {
+        let process_status = if let Some(ref mut child) = self.dd_child {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    self.finished = true;
+                    self.success = status.success();
+                    self.dd_child = None;
+                    Some(self.success)
+                }
+                Ok(None) => None,
+                Err(_) => {
+                    self.finished = true;
+                    self.success = false;
+                    Some(false)
+                }
+            }
+        } else {
+            Some(true)
+        };
+
+        let io = self.read_written_bytes();
+        (process_status, io)
+    }
+
     /// Check if the dd process has finished. Returns Some(success) or None if still running.
     pub fn check_process(&mut self) -> Option<bool> {
         if let Some(ref mut child) = self.dd_child {

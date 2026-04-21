@@ -40,13 +40,23 @@ get_size_human() {
 get_model() {
     local model=""
     [ -f "/sys/block/$1/device/model" ] && model=$(cat "/sys/block/$1/device/model" 2>/dev/null)
+    [ -f "/sys/block/$1/device/device/model" ] && model=$(cat "/sys/block/$1/device/device/model" 2>/dev/null)
     [ -f "/sys/block/$1/device/name" ] && model=$(cat "/sys/block/$1/device/name" 2>/dev/null)
+    [ -f "/sys/block/$1/device/device/name" ] && model=$(cat "/sys/block/$1/device/device/name" 2>/dev/null)
     echo "${model:-Unknown}"
 }
 
 # 检查磁盘或其分区是否已挂载
 is_mounted() {
-    grep -q "^/dev/$1" /proc/mounts 2>/dev/null
+    local name="$1"
+    while read dev rest; do
+        case "$dev" in
+            /dev/"$name") return 0 ;;
+            /dev/"$name"[0-9]*) return 0 ;;
+            /dev/"$name"p[0-9]*) return 0 ;;
+        esac
+    done < /proc/mounts
+    return 1
 }
 
 # ---------------------------------------------------------------------------

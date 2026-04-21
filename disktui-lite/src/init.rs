@@ -52,6 +52,8 @@ fn install_busybox() -> anyhow::Result<()> {
     if !status.success() {
         bail!("busybox --install failed");
     }
+    // SAFETY: This runs sequentially during early init (PID 1) before any
+    // other threads or async runtimes are spawned. No concurrent access.
     unsafe {
         std::env::set_var("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
     }
@@ -69,18 +71,21 @@ fn mount_virtual_fs() -> anyhow::Result<()> {
 
     use nix::mount::{mount, MsFlags};
 
-    let _ = mount::<str, str, str, str>(Some("proc"), "/proc", Some("proc"),
-        MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV, None);
+    mount::<str, str, str, str>(Some("proc"), "/proc", Some("proc"),
+        MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV, None)
+        .map_err(|_| anyhow::anyhow!("Failed to mount /proc"))?;
 
-    let _ = mount::<str, str, str, str>(Some("sysfs"), "/sys", Some("sysfs"),
-        MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV, None);
+    mount::<str, str, str, str>(Some("sysfs"), "/sys", Some("sysfs"),
+        MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV, None)
+        .map_err(|_| anyhow::anyhow!("Failed to mount /sys"))?;
 
-    let dev_result = mount::<str, str, str, str>(Some("devtmpfs"), "/dev", Some("devtmpfs"),
-        MsFlags::MS_NOSUID, Some("mode=0755"));
-    if dev_result.is_err() {
+    if mount::<str, str, str, str>(Some("devtmpfs"), "/dev", Some("devtmpfs"),
+        MsFlags::MS_NOSUID, Some("mode=0755,size=2M")).is_err()
+    {
         eprintln!("devtmpfs unavailable, using tmpfs");
-        let _ = mount::<str, str, str, str>(Some("tmpfs"), "/dev", Some("tmpfs"),
-            MsFlags::MS_NOSUID, Some("mode=0755"));
+        mount::<str, str, str, str>(Some("tmpfs"), "/dev", Some("tmpfs"),
+            MsFlags::MS_NOSUID, Some("mode=0755,size=2M"))
+            .map_err(|_| anyhow::anyhow!("Failed to mount /dev"))?;
     }
 
     let _ = mount::<str, str, str, str>(Some("devpts"), "/dev/pts", Some("devpts"),
@@ -98,6 +103,10 @@ fn mount_virtual_fs() -> anyhow::Result<()> {
     if !Path::new("/dev/kmsg").exists() {
         let _ = mknod("/dev/kmsg", SFlag::S_IFCHR, Mode::from_bits(0o660).unwrap(),
             nix::sys::stat::makedev(1, 11));
+    }
+    if !Path::new("/dev/ptmx").exists() {
+        let _ = mknod("/dev/ptmx", SFlag::S_IFCHR, Mode::from_bits(0o666).unwrap(),
+            nix::sys::stat::makedev(5, 2));
     }
 
     let _ = std::os::unix::fs::symlink("/proc/mounts", "/etc/mtab");
@@ -137,7 +146,20 @@ fn load_modules() -> anyhow::Result<()> {
         let _ = std::process::Command::new("modprobe").arg(line).status();
     }
 
+    load_vendor_specific_modules();
+
     Ok(())
+}
+
+fn load_vendor_specific_modules() {
+    if let Ok(vendor) = fs::read_to_string("/sys/devices/virtual/dmi/id/sys_vendor")
+        && vendor.trim().contains("VMware")
+    {
+        eprintln!("VMware detected, loading virtual SCSI drivers...");
+        for mod_name in &["ata_piix", "mptspi", "sr_mod"] {
+            let _ = std::process::Command::new("modprobe").arg(mod_name).status();
+        }
+    }
 }
 
 // ── Phase 5: Boot Media Scan (brute force) ────────────────────────────
@@ -198,12 +220,10 @@ fn enumerate_dev_devices() -> Vec<String> {
 }
 
 fn is_block_device(path: &str) -> bool {
-    use nix::sys::stat::stat;
-    if let Ok(stat) = stat(path) {
-        let mode = stat.st_mode;
-        const S_IFMT: u32 = 0o170000;
-        const S_IFBLK: u32 = 0o060000;
-        (mode & S_IFMT) == S_IFBLK
+    use nix::sys::stat::{stat, SFlag};
+    if let Ok(st) = stat(path) {
+        let mode = SFlag::from_bits_truncate(st.st_mode);
+        mode.contains(SFlag::S_IFBLK)
     } else {
         false
     }

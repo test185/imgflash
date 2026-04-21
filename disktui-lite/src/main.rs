@@ -16,11 +16,14 @@ fn main() -> AppResult<()> {
     // This gives us process isolation for uu_dd: we can kill it with
     // Child::kill() and read progress via /proc/$PID/io.
     if std::env::args().any(|a| a == "--dd") {
-        let dd_args: Vec<std::ffi::OsString> = std::iter::once(std::ffi::OsString::from("dd"))
-            .chain(std::env::args_os().skip(2)) // skip argv[0] and --dd
+        let dd_args: Vec<std::ffi::OsString> = std::env::args_os()
+            .skip_while(|arg| arg != "--dd")
+            .skip(1)
             .collect();
-        let code = uu_dd::uumain(dd_args.into_iter());
-        std::process::exit(code);
+        if !dd_args.is_empty() {
+            let code = uu_dd::uumain(dd_args.into_iter());
+            std::process::exit(code);
+        }
     }
 
     // Detect if we are PID 1 (running as init in initramfs)
@@ -127,6 +130,17 @@ fn main() -> AppResult<()> {
                 return Ok(());
             }
             ExitAction::None => break,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    if is_pid1 {
+        eprintln!("Installer exited. Rebooting in 3 seconds...");
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        nix::unistd::sync();
+        let _ = nix::sys::reboot::reboot(nix::sys::reboot::RebootMode::RB_AUTOBOOT);
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
         }
     }
 

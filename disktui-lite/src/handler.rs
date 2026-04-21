@@ -244,20 +244,16 @@ pub fn poll_dd_progress(app: &mut App) {
         return;
     }
 
-    // Read wchar from /proc/$PID/io
-    let written = progress.read_written_bytes();
+    let (process_status, written) = progress.check_and_read_io();
     progress.update_progress(written, 0.1);
 
-    // Check if dd process has finished
-    match progress.check_process() {
+    match process_status {
         Some(true) => {
             app.goto_success();
         }
         Some(false) => {
             app.goto_write_error();
         }
-        None => {
-            // Still running
-        }
+        None => {}
     }
 }

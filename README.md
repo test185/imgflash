@@ -5,6 +5,7 @@
 **将任意 `.img` 镜像打包为可引导 ISO，启动后一键写入磁盘**
 
 <p align="center">
+  <img src="https://img.shields.io/badge/language-rust-orange?style=flat-square&logo=rust" alt="Rust">
   <img src="https://img.shields.io/badge/language-bash-yellow?style=flat-square&logo=gnubash" alt="Bash">
   <img src="https://img.shields.io/badge/dockerfile-ready-blue?style=flat-square&logo=docker" alt="Dockerfile">
 </p>
@@ -39,7 +40,20 @@
   - BIOS 链：syslinux → vmlinuz
 - **arm64**：UEFI 单启动
   - UEFI 链：同 amd64，按 Secure Boot 配置决定
-- **运行时**：initramfs `/init` → 加载模块/挂载介质 → exec `installer` → dd 写盘 → 重启
+- **运行时**：
+  - TUI 模式：`disktui-lite`（Rust）同时充当 init 和安装器
+  - Shell 模式：`init.sh` → `installer.sh`（Bash）
+
+## 安装器模式
+
+| | TUI 模式（默认） | Shell 模式 |
+|---|---|---|
+| 实现 | `disktui-lite`（Rust + Ratatui） | `installer.sh`（Bash） |
+| init | 内建 init 逻辑（替代 init.sh） | `init.sh` |
+| 界面 | 终端 TUI，键盘导航 | 纯文本菜单，数字选择 |
+| 确认 | 方向键选择 Yes/No | 输入大写 `YES` |
+| 进度条 | 实时进度条 + 速度 + ETA | 文字进度 + 速度 |
+| 配置 | `USE_TUI=1` | `USE_TUI=0` |
 
 ## 构建流程
 
@@ -47,7 +61,7 @@
 |------|------|
 | Phase 1 | mmdebstrap 创建最小 Debian 环境（含引导组件） |
 | Phase 2 | 提取内核 / shim（可选） / GRUB / BusyBox |
-| Phase 3 | 组装 initramfs（BusyBox + 内核模块 + 安装脚本） |
+| Phase 3 | 组装 initramfs（安装器 + 内核模块 + BusyBox） |
 | Phase 4 | 将镜像打包为 squashfs 容器（zstd 压缩） |
 | Phase 5 | 组装 ISO 文件系统结构（UEFI 引导 + 可选 BIOS 引导） |
 | Phase 6 | xorriso 生成最终 ISO |
@@ -102,7 +116,8 @@ docker run --rm --privileged \
 | `INCLUDE_NVME` | NVMe 模块开关 | `1` |
 | `INCLUDE_VIRT` | 虚拟化模块开关 | `1` |
 | `ENABLE_SECURE_BOOT` | Secure Boot 支持 | `0` |
-| `BOOT_TIMEOUT` | 启动菜单超时（秒） | `3` |
+| `USE_TUI` | 安装器模式（1=TUI / 0=Shell） | `1` |
+| `BOOT_TIMEOUT` | 启动菜单超时（秒） | `0` |
 | `KERNEL_PARAMS` | 内核启动参数 | `quiet` |
 | `SCAN_TIMEOUT` | 启动时扫描介质的超时秒数 | `10` |
 | `ZSTD_LEVEL` | zstd 压缩级别 | `19` |
@@ -111,21 +126,48 @@ docker run --rm --privileged \
 
 通过 `workflow_dispatch` 手动触发构建：
 
+### 构建 ISO
+
 1. 进入仓库 Actions 页面
 2. 选择 "构建 ImgFlash 安装器 ISO" 工作流
-3. 选择目标架构（amd64 / arm64）
-4. 填入镜像下载地址和可选的 ISO 名称
-5. 按需启用 Secure Boot
-6. 构建完成后从 Artifacts 下载 ISO
+3. 填入参数：
+   - **下载地址**：磁盘镜像 URL
+   - **目标架构**：amd64 / arm64
+   - **ISO 名称**：可选，默认从 URL 推导
+   - **Secure Boot**：是否启用
+   - **TUI**：是否使用 TUI 安装器
+   - **释放空间**：CI 磁盘空间不足时启用
+   - **不使用缓存**：强制重新构建
+4. 构建完成后从 Artifacts 下载 ISO
+
+### 发布 ISO
+
+"发布 ISO" 工作流额外支持：
+- 自动压缩（gz / xz / bz2 / zip / 7z）
+- 创建 GitHub Release 并上传
 
 ## 安装器运行时
 
-ISO 启动后进入交互式安装器：
+### TUI 模式
+
+| 按键 | 功能 |
+|------|------|
+| `↑` / `k` | 上移 |
+| `↓` / `j` | 下移 |
+| `Enter` | 选择磁盘 |
+| `←` / `→` / `Tab` | 切换确认按钮 |
+| `r` | 刷新磁盘列表 |
+| `s` | 进入 Shell |
+| `?` | 帮助 |
+| `q` | 退出 |
+| `Esc` | 中止写入 |
+
+### Shell 模式
 
 1. 自动枚举可写磁盘（显示大小和型号）
 2. 用户选择目标磁盘
 3. 二次确认（需输入大写 `YES`）
 4. dd 写入并显示实时进度
-5. 写入完成后自动弹出介质并重启
+5. 写入完成后自动重启
 
 选择 `0` 可进入 Shell 进行手动操作。

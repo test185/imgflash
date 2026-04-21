@@ -70,12 +70,15 @@ impl DiskInfo {
         let size_bytes = sectors * 512;
 
         let vendor = fs::read_to_string(base.join("device/vendor"))
+            .or_else(|_| fs::read_to_string(base.join("device/device/vendor")))
             .unwrap_or_else(|_| "Unknown".to_string())
             .trim()
             .to_string();
 
         let model = fs::read_to_string(base.join("device/model"))
+            .or_else(|_| fs::read_to_string(base.join("device/device/model")))
             .or_else(|_| fs::read_to_string(base.join("device/name")))
+            .or_else(|_| fs::read_to_string(base.join("device/device/name")))
             .unwrap_or_else(|_| "Unknown".to_string())
             .trim()
             .to_string();
@@ -118,28 +121,74 @@ impl DiskInfo {
     fn detect_bus(name: &str) -> String {
         if name.starts_with("nvme") {
             "NVMe".to_string()
-        } else if name.starts_with("sd") {
-            "SATA".to_string()
         } else if name.starts_with("vd") {
             "VirtIO".to_string()
         } else if name.starts_with("mmcblk") {
             "eMMC".to_string()
         } else if name.starts_with("hd") {
             "IDE".to_string()
+        } else if name.starts_with("sd") {
+            Self::detect_sd_bus(name)
         } else {
             "Unknown".to_string()
         }
     }
 
+    fn detect_sd_bus(name: &str) -> String {
+        let base = Path::new("/sys/block").join(name);
+
+        if let Ok(link) = fs::read_link(base.join("device/subsystem")) {
+            let subsystem = link
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            match subsystem.as_str() {
+                "usb" => return "USB".to_string(),
+                "scsi" => {}
+                _ => return subsystem,
+            }
+        }
+
+        if let Ok(link) = fs::read_link(base.join("device")) {
+            let path = link.to_string_lossy().to_string();
+            if path.contains("/usb") {
+                return "USB".to_string();
+            }
+        }
+
+        if let Ok(removable) = fs::read_to_string(base.join("removable"))
+            && removable.trim() == "1"
+        {
+            return "USB".to_string();
+        }
+
+        "SCSI/SATA".to_string()
+    }
+
     /// Check if the device or any of its partitions are mounted (via /proc/mounts).
     fn check_mounted(name: &str) -> (bool, Option<String>) {
+        if name.trim().is_empty() {
+            return (false, None);
+        }
+
         if let Ok(mounts) = fs::read_to_string("/proc/mounts") {
             for line in mounts.lines() {
-                if line.starts_with(&format!("/dev/{}", name)) {
-                    if let Some(mount_point) = line.split_whitespace().nth(1) {
+                let mut parts = line.split_whitespace();
+                if let (Some(dev_path), Some(mount_point)) = (parts.next(), parts.next())
+                    && let Some(dev_name) = dev_path.strip_prefix("/dev/")
+                {
+                    let is_match = if dev_name == name {
+                        true
+                    } else if let Some(suffix) = dev_name.strip_prefix(name) {
+                        let first_char = suffix.chars().next().unwrap_or(' ');
+                        first_char.is_ascii_digit() || first_char == 'p'
+                    } else {
+                        false
+                    };
+
+                    if is_match {
                         return (true, Some(mount_point.to_string()));
                     }
-                    return (true, None);
                 }
             }
         }
