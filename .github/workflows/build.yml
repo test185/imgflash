@@ -79,8 +79,9 @@ jobs:
 
       - name: "保存 disktui-lite"
         run: |
-          mkdir -p binaries
+          mkdir -p ../binaries
           cp target/${{ env.TARGET }}/release/disktui-lite ../binaries/disktui-lite
+        working-directory: disktui-lite
 
       - name: "设置目标架构"
         run: sed -i "s/^ARCH=.*/ARCH=${{ github.event.inputs.arch }}/" build.env
