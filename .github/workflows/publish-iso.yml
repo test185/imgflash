@@ -39,6 +39,8 @@ jobs:
   build-and-publish:
     name: "构建并发布 ISO (${{ github.event.inputs.arch }})"
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: "释放 Action 空间"
