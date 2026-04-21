@@ -95,7 +95,7 @@ jobs:
           sudo apt-get install -y musl-tools
 
       - name: "Rust 编译缓存"
-        if: ${{ github.event.inputs.use_tui == 'true' && github.event.inputs.no_cache != 'true' }}
+        if: ${{ github.event.inputs.use_tui == 'true' }}
         uses: swatinem/rust-cache@v2
         with:
           workspaces: disktui-lite
@@ -141,7 +141,7 @@ jobs:
           load: true
           tags: imgflash:latest
           cache-from: ${{ github.event.inputs.no_cache != 'true' && 'type=gha' || '' }}
-          cache-to: ${{ github.event.inputs.no_cache != 'true' && 'type=gha,mode=max' || '' }}
+          cache-to: type=gha,mode=max
           no-cache: ${{ github.event.inputs.no_cache == 'true' }}
 
       - name: "构建 ISO"
