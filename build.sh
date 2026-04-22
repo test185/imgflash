@@ -1,38 +1,16 @@
 #!/bin/bash
-# =============================================================================
-# ImgFlash - 纯 initramfs ISO 构建器
-# =============================================================================
-# 生成同时支持 BIOS + UEFI 的混合启动 ISO。
-#
-# 架构：纯 initramfs-only（无 rootfs、无 overlayfs、无 OpenRC）。
-#   UEFI (SB=1): shim（Microsoft 签名）→ GRUB（Debian 签名）→ vmlinuz（Debian 签名）
-#   UEFI (SB=0): GRUB（Debian 签名）→ vmlinuz（Debian 签名）
-#   BIOS: syslinux → vmlinuz
-# 运行时：initramfs /init → exec installer → dd 写盘 → 重启
-#
-# 构建流程：
-#   Phase 1: mmdebstrap 创建最小 Debian 环境
-#   Phase 2: 提取组件（内核 / shim / GRUB / BusyBox）
-#   Phase 3: 组装 initramfs
-#   Phase 4: 打包镜像容器
-#   Phase 5: 组装 ISO 文件系统结构
-#   Phase 6: xorriso 生成最终 ISO
-# =============================================================================
+# ===========
+# ImgFlash
+# ===========
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# ---------------------------------------------------------------------------
-# 加载构建配置
-# ---------------------------------------------------------------------------
 ENV_FILE="${SCRIPT_DIR}/build.env"
-if [[ ! -f "${ENV_FILE}" ]]; then
-    echo "错误：缺少配置文件 ${ENV_FILE}" >&2; exit 1
-fi
-
-# shellcheck disable=SC1090
+[[ -f "${ENV_FILE}" ]] || { echo "错误：缺少配置文件 ${ENV_FILE}" >&2; exit 1; }
 source "${ENV_FILE}"
+
+die() { echo "错误：$*" >&2; exit 1; }
 
 # --- 架构映射 ---
 case "${ARCH}" in
@@ -56,78 +34,72 @@ case "${ARCH}" in
         EFI_GRUB_NAME="grubaa64.efi"
         HAS_BIOS=0
         ;;
-    *)
-        echo "错误：不支持的架构 '${ARCH}'（支持 amd64 / arm64）" >&2; exit 1
-        ;;
+    *) die "不支持的架构 '${ARCH}'（支持 amd64 / arm64）" ;;
 esac
 
 SIGNED_PKGS="${KERNEL_PKG},${GRUB_PKG}"
 [[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && SIGNED_PKGS="${KERNEL_PKG},${SHIM_PKG},${GRUB_PKG}"
 
-# --- 基础模块（所有场景必需） ---
 BASE_MODULES="${MOD_FILESYSTEM} ${MOD_NLS} ${MOD_ATA} ${MOD_USB} ${MOD_CDROM} ${MOD_INPUT}"
-
-# --- 可选模块 ---
-OPT_NVME=""
-[[ "${INCLUDE_NVME}" != "0" ]] && OPT_NVME="${MOD_NVME}"
-
-OPT_VIRT=""
-[[ "${INCLUDE_VIRT}" != "0" ]] && OPT_VIRT="${MOD_VIRT}"
-
-# --- 最终模块列表 ---
+OPT_NVME=$([[ "${INCLUDE_NVME}" != "0" ]] && echo "${MOD_NVME}" || echo "")
+OPT_VIRT=$([[ "${INCLUDE_VIRT}" != "0" ]] && echo "${MOD_VIRT}" || echo "")
 REQUIRED_MODULES="${BASE_MODULES} ${OPT_NVME} ${OPT_VIRT}"
 
 ISOLINUX_BIN=$(find /usr -name isolinux.bin 2>/dev/null | head -1)
 LDLINUX_C32=$(find /usr -name ldlinux.c32 2>/dev/null | head -1)
 ISOHDPFX_PATH=$(find /usr -name isohdpfx.bin 2>/dev/null | head -1)
 
-# ---------------------------------------------------------------------------
-# 构建目录
-# ---------------------------------------------------------------------------
+# --- 构建目录 ---
 BUILD_DIR="${SCRIPT_DIR}/build"
 ROOTFS_DIR="${BUILD_DIR}/rootfs"
 INITRAMFS_DIR="${BUILD_DIR}/initramfs"
 ISO_DIR="${BUILD_DIR}/iso"
 OUTPUT_DIR="${SCRIPT_DIR}/output"
 
-# ---------------------------------------------------------------------------
-# 退出清理
-# ---------------------------------------------------------------------------
+# --- 退出清理 ---
 BUILD_SUCCESS=0
-
 cleanup() {
-    # 构建失败时清理半成品
-    if [[ "${BUILD_SUCCESS}" -eq 0 && -d "${BUILD_DIR}" ]]; then
-        echo "清理构建目录..."
-        rm -rf "${BUILD_DIR}"
-    fi
+    [[ "${BUILD_SUCCESS}" -eq 0 && -d "${BUILD_DIR}" ]] && { echo "清理构建目录..."; rm -rf "${BUILD_DIR}"; }
 }
-
 trap cleanup EXIT
 
-# ---------------------------------------------------------------------------
-# 辅助函数
-# ---------------------------------------------------------------------------
+# --- 辅助函数 ---
+verify_sha256() {
+    local actual=$(sha256sum "$1" | cut -d' ' -f1)
+    [[ "$actual" == "$2" ]] && { echo "  SHA256 校验通过"; return 0; }
+    echo "  SHA256 校验失败！" >&2
+    echo "  预期: $2" >&2
+    echo "  实际: $actual" >&2
+    return 1
+}
 
 retry() {
-    local max="${1}" delay="${2}"
+    local max="$1" delay="$2"
     shift 2
     for i in $(seq 1 "$max"); do
-        if "$@"; then return 0; fi
-        [[ $i -eq $max ]] && { echo "错误：重试 $max 次后仍失败：$*" >&2; return 1; }
+        "$@" && return 0
+        [[ $i -eq $max ]] && die "重试 $max 次后仍失败：$*"
         echo "  第 $i/$max 次重试，${delay} 秒后..."
         sleep "$delay"
     done
 }
 
 download_image() {
-    local url="$1"
-
+    local url="$1" checksum="$2"
     echo "  正在下载：${url}"
-    retry 3 5 curl -k -L -o "${BUILD_DIR}/downloaded_file" "$url"
+    retry 3 5 curl -Lo "${BUILD_DIR}/downloaded_file" "$url"
 
-    local file_type
-    file_type=$(file --mime-type -b "${BUILD_DIR}/downloaded_file")
+    if [[ -n "$checksum" ]]; then
+        echo "  正在验证 SHA256..."
+        verify_sha256 "${BUILD_DIR}/downloaded_file" "$checksum" || {
+            echo "  校验失败，尝试重新下载..."
+            rm -f "${BUILD_DIR}/downloaded_file"
+            retry 2 3 curl -Lo "${BUILD_DIR}/downloaded_file" "$url"
+            verify_sha256 "${BUILD_DIR}/downloaded_file" "$checksum" || die "SHA256 校验再次失败，终止构建"
+        }
+    fi
+
+    local file_type=$(file --mime-type -b "${BUILD_DIR}/downloaded_file")
     echo "  文件类型：${file_type}"
 
     local extracted_name=""
@@ -160,96 +132,72 @@ download_image() {
     esac
 
     rm -f "${BUILD_DIR}/downloaded_file"
-
-    if [[ -z "${extracted_name}" || ! -f "${BUILD_DIR}/${extracted_name}" ]]; then
-        echo "错误：未找到解压后的镜像文件！" >&2; exit 1
-    fi
+    [[ -n "${extracted_name}" && -f "${BUILD_DIR}/${extracted_name}" ]] || die "未找到解压后的镜像文件！"
 
     mv "${BUILD_DIR}/${extracted_name}" "${BUILD_DIR}/temp.img"
-
-    if [[ -z "${ISO_NAME}" ]]; then
-        ISO_NAME=$(basename "${extracted_name}" .img)
-    fi
+    ISO_NAME=${ISO_NAME:-$(basename "${extracted_name}" .img)}
 }
 
-# ---------------------------------------------------------------------------
-# CLI 参数解析
-# ---------------------------------------------------------------------------
+# --- CLI 参数解析 ---
 IMAGE_PATH=""
 IMAGE_URL=""
 ISO_NAME=""
+SHA256_CHECKSUM=""
 
 show_help() {
-    echo "ImgFlash - 纯 initramfs ISO 构建器"
-    echo ""
-    echo "用法: $0 [选项]"
-    echo ""
-    echo "选项:"
-    echo "  -i, --image   指定本地 .img 文件路径"
-    echo "  -u, --url     从 URL 下载镜像文件"
-    echo "  -n, --name    输出 ISO 名称（默认从镜像文件名推导）"
-    echo "  -h, --help    显示此帮助"
+    cat <<EOF
+ImgFlash - 纯 initramfs ISO 构建器
+
+用法: $0 [选项]
+
+选项:
+  -i, --image    指定本地 .img 文件路径
+  -u, --url      从 URL 下载镜像文件
+  -n, --name     输出 ISO 名称（默认从镜像文件名推导）
+  -c, --checksum SHA256 校验值（可选）
+  -h, --help     显示此帮助
+EOF
 }
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        -i|--image)
-            IMAGE_PATH="$2"; shift 2 ;;
-        -n|--name)
-            ISO_NAME="$2"; shift 2 ;;
-        -u|--url)
-            IMAGE_URL="$2"; shift 2 ;;
-        -h|--help)
-            show_help; exit 0 ;;
-        *)
-            echo "未知选项: $1"; show_help; exit 1 ;;
+        -i|--image) IMAGE_PATH="$2"; shift 2 ;;
+        -n|--name)  ISO_NAME="$2"; shift 2 ;;
+        -u|--url)   IMAGE_URL="$2"; shift 2 ;;
+        -c|--checksum) SHA256_CHECKSUM="$2"; shift 2 ;;
+        -h|--help)  show_help; exit 0 ;;
+        *) echo "未知选项: $1"; show_help; exit 1 ;;
     esac
 done
 
-if [[ -z "${IMAGE_URL}" && -z "${IMAGE_PATH}" ]]; then
-    echo "错误：必须提供镜像路径 (-i) 或下载 URL (-u)"
-    show_help
-    exit 1
-fi
+[[ -n "${IMAGE_URL}" || -n "${IMAGE_PATH}" ]] || die "必须提供镜像路径 (-i) 或下载 URL (-u)"
 
-# ---------------------------------------------------------------------------
-# 依赖检查
-# ---------------------------------------------------------------------------
-
+# --- 依赖检查 ---
 echo "==== 依赖检查 ===="
-REQUIRED_CMDS="mmdebstrap curl tar xz zstd modprobe depmod mksquashfs xorriso mcopy mmd mkfs.vfat cpio file"
+REQUIRED_CMDS="mmdebstrap curl tar xz zstd modprobe depmod mksquashfs xorriso mcopy mmd mkfs.vfat cpio file sha256sum"
 for cmd in ${REQUIRED_CMDS}; do
-    if ! command -v "$cmd" &>/dev/null; then
-        echo "错误：缺少必要命令 '$cmd'，请先安装" >&2; exit 1
-    fi
+    command -v "$cmd" &>/dev/null || die "缺少必要命令 '$cmd'，请先安装"
 done
 echo "  依赖检查通过"
 
-# ---------------------------------------------------------------------------
-# 确定输入镜像
-# ---------------------------------------------------------------------------
+# --- 确定输入镜像 ---
 mkdir -p "${BUILD_DIR}" "${OUTPUT_DIR}"
 
-if [[ -n "${IMAGE_URL}" ]]; then
-    download_image "${IMAGE_URL}"
-fi
+[[ -n "${IMAGE_URL}" ]] && download_image "${IMAGE_URL}" "${SHA256_CHECKSUM}"
 
 if [[ -n "${IMAGE_PATH}" ]]; then
-    if [[ ! -f "${IMAGE_PATH}" ]]; then
-        echo "错误：找不到镜像文件：${IMAGE_PATH}" >&2; exit 1
-    fi
+    [[ -f "${IMAGE_PATH}" ]] || die "找不到镜像文件：${IMAGE_PATH}"
+    [[ -n "${SHA256_CHECKSUM}" ]] && { echo "  正在验证本地镜像 SHA256..."; verify_sha256 "${IMAGE_PATH}" "${SHA256_CHECKSUM}" || exit 1; }
     cp "${IMAGE_PATH}" "${BUILD_DIR}/temp.img"
-    if [[ -z "${ISO_NAME}" ]]; then
-        ISO_NAME=$(basename "${IMAGE_PATH}" .img)
-    fi
+    ISO_NAME=${ISO_NAME:-$(basename "${IMAGE_PATH}" .img)}
 fi
 
-# ---------------------------------------------------------------------------
-# 初始化构建环境
-# ---------------------------------------------------------------------------
+# =============================================================================
+# Phase 1: mmdebstrap 创建最小 Debian 环境
+# =============================================================================
+rm -rf "${ROOTFS_DIR}"
 
-echo ""
-echo "=========================================="
+echo ""; echo "=========================================="
 echo "  ImgFlash - ISO 构建器"
 echo "=========================================="
 echo "  Debian 套件 : ${DEBIAN_SUITE}"
@@ -257,64 +205,43 @@ echo "  目标架构    : ${ARCH}"
 echo "  Secure Boot : $([ "${ENABLE_SECURE_BOOT:-0}" == "1" ] && echo "启用" || echo "禁用")"
 echo "  Debian 镜像 : ${DEBIAN_MIRROR}"
 echo "  输出名称    : ${ISO_NAME}"
-echo "=========================================="
-echo ""
-
-# =============================================================================
-# Phase 1: mmdebstrap 创建最小 Debian 环境
-# =============================================================================
-
-rm -rf "${ROOTFS_DIR}"
+echo "=========================================="; echo ""
 
 echo "[Phase 1] mmdebstrap ${DEBIAN_SUITE} (${ARCH}) ..."
 mmdebstrap --variant=essential \
     --include="${SIGNED_PKGS}" \
     "${DEBIAN_SUITE}" "${ROOTFS_DIR}" "${DEBIAN_MIRROR}"
-
 echo "  Phase 1 完成。"
 
 # =============================================================================
 # Phase 2: 提取组件
 # =============================================================================
+echo ""; echo "[Phase 2] 提取组件 ..."
 
-echo ""
-echo "[Phase 2] 提取组件 ..."
-
-# --- 签名内核 ---
 VMLINUZ=$(ls "${ROOTFS_DIR}"/boot/vmlinuz-* 2>/dev/null | head -1)
-if [[ -z "${VMLINUZ}" ]]; then
-    echo "错误：rootfs 中未找到 vmlinuz" >&2; exit 1
-fi
+[[ -n "${VMLINUZ}" ]] || die "rootfs 中未找到 vmlinuz"
 KVER=$(basename "${VMLINUZ}" | sed 's/^vmlinuz-//')
 echo "  内核版本：${KVER}"
 
-# --- shim + 签名 GRUB ---
 GRUB_SRC=$(find "${ROOTFS_DIR}" -name "${GRUB_FIND}" 2>/dev/null | head -1)
-[[ -n "${GRUB_SRC}" ]] || { echo "错误：rootfs 中未找到 GRUB" >&2; exit 1; }
+[[ -n "${GRUB_SRC}" ]] || die "rootfs 中未找到 GRUB"
 
 if [[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]]; then
     SHIM_SRC=$(find "${ROOTFS_DIR}" -name "${SHIM_FIND}" 2>/dev/null | head -1)
-    [[ -n "${SHIM_SRC}" ]] || { echo "错误：rootfs 中未找到 shim" >&2; exit 1; }
+    [[ -n "${SHIM_SRC}" ]] || die "rootfs 中未找到 shim"
 fi
 
-# --- BusyBox（来自 busybox-static 包，静态链接） ---
-if ! command -v busybox &>/dev/null; then
-    echo "错误：未找到 busybox，请安装 busybox-static 包" >&2; exit 1
-fi
+command -v busybox &>/dev/null || die "未找到 busybox，请安装 busybox-static 包"
 echo "  BusyBox $(busybox --help 2>&1 | head -1 | awk '{print $NF}')"
 
-# 清理 rootfs 的 apt 缓存
 rm -rf "${ROOTFS_DIR}/var/lib/apt/lists"/* \
        "${ROOTFS_DIR}/var/cache/apt"/*
-
 echo "  Phase 2 完成。"
 
 # =============================================================================
 # Phase 3: 组装 initramfs
 # =============================================================================
-
-echo ""
-echo "[Phase 3] 组装 initramfs ..."
+echo ""; echo "[Phase 3] 组装 initramfs ..."
 
 rm -rf "${INITRAMFS_DIR}"
 mkdir -p "${INITRAMFS_DIR}"/{bin,sbin,etc,proc,sys,dev,run,tmp}
@@ -322,49 +249,32 @@ mkdir -p "${INITRAMFS_DIR}"/{usr/bin,usr/sbin,lib}
 mkdir -p "${INITRAMFS_DIR}"/{media/cdrom,image,var/log,root}
 mkdir -p "${INITRAMFS_DIR}"/{dev/pts,dev/shm}
 
-# BusyBox
 cp /bin/busybox "${INITRAMFS_DIR}/bin/busybox"
 chmod +x "${INITRAMFS_DIR}/bin/busybox"
-
-# 创建 /bin/sh 符号链接（内核执行 /init 时需要解释器）
 ln -s busybox "${INITRAMFS_DIR}/bin/sh"
 
-# --- 安装器 ---
 if [[ "${USE_TUI}" == "1" ]]; then
-    # TUI 模式：disktui-lite 同时充当 init 和安装器
-    if [[ ! -f "/build/binaries/disktui-lite" ]]; then
-        echo "错误：找不到 /build/binaries/disktui-lite，请先构建 disktui-lite" >&2; exit 1
-    fi
+    [[ -f "/build/binaries/disktui-lite" ]] || die "找不到 /build/binaries/disktui-lite，请先构建 disktui-lite"
     cp /build/binaries/disktui-lite "${INITRAMFS_DIR}/usr/bin/disktui-lite"
     chmod +x "${INITRAMFS_DIR}/usr/bin/disktui-lite"
-
     ln -s /usr/bin/disktui-lite "${INITRAMFS_DIR}/init"
 else
-    # Shell 模式：init.sh + installer.sh
     cp "${SCRIPT_DIR}/scripts/init.sh" "${INITRAMFS_DIR}/init"
     chmod +x "${INITRAMFS_DIR}/init"
-
     sed -i "s/TRIES -lt 10/TRIES -lt ${SCAN_TIMEOUT}/" "${INITRAMFS_DIR}/init"
     sed -i "s/after 10 seconds/after ${SCAN_TIMEOUT} seconds/" "${INITRAMFS_DIR}/init"
-
     cp "${SCRIPT_DIR}/scripts/installer.sh" "${INITRAMFS_DIR}/usr/bin/installer"
     chmod +x "${INITRAMFS_DIR}/usr/bin/installer"
 fi
 
-# 内核模块列表
 echo "${REQUIRED_MODULES}" | tr ' ' '\n' > "${INITRAMFS_DIR}/etc/modules"
 
-# 精简内核模块
 echo "  精简内核模块 ..."
-
 MOD_SRC="${ROOTFS_DIR}/lib/modules/${KVER}"
-if [[ ! -d "${MOD_SRC}" ]]; then
-    echo "错误：找不到内核模块目录 ${MOD_SRC}" >&2; exit 1
-fi
+[[ -d "${MOD_SRC}" ]] || die "找不到内核模块目录 ${MOD_SRC}"
 
 depmod -b "${ROOTFS_DIR}" "${KVER}"
 
-# 用 modprobe 解析所需模块及依赖
 echo "  正在解析模块依赖链 ..."
 NEEDED_FILES=""
 for mod in ${REQUIRED_MODULES}; do
@@ -374,9 +284,7 @@ for mod in ${REQUIRED_MODULES}; do
 done
 NEEDED_FILES=$(echo "$NEEDED_FILES" | tr ' ' '\n' | sort -u | grep .)
 
-if [[ -z "$NEEDED_FILES" ]]; then
-    echo "错误：modprobe 未能解析任何模块依赖，构建环境异常" >&2; exit 1
-fi
+[[ -n "$NEEDED_FILES" ]] || die "modprobe 未能解析任何模块依赖，构建环境异常"
 
 MOD_DEST="${INITRAMFS_DIR}/lib/modules/${KVER}"
 echo "  包含 $(echo "$NEEDED_FILES" | wc -l) 个模块（含依赖）"
@@ -388,31 +296,27 @@ for mod_file in $NEEDED_FILES; do
     xz -dc "$mod_file" > "${dest_dir}/$(basename "${rel_path%.xz}")"
 done
 
-# 拷贝模块元数据
 for f in modules.builtin modules.builtin.modinfo modules.order; do
     [ -f "${MOD_SRC}/$f" ] && cp "${MOD_SRC}/$f" "${MOD_DEST}/"
 done
 
-# 模块已全部复制到 initramfs，提取后续阶段需要的文件，然后释放 rootfs
-cp "${VMLINUZ}"   "${BUILD_DIR}/vmlinuz"
-cp "${GRUB_SRC}"  "${BUILD_DIR}/grub.efi"
+cp "${VMLINUZ}"  "${BUILD_DIR}/vmlinuz"
+cp "${GRUB_SRC}" "${BUILD_DIR}/grub.efi"
 VMLINUZ="${BUILD_DIR}/vmlinuz"
 GRUB_SRC="${BUILD_DIR}/grub.efi"
 
 if [[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]]; then
-    cp "${SHIM_SRC}"  "${BUILD_DIR}/shim.efi"
+    cp "${SHIM_SRC}" "${BUILD_DIR}/shim.efi"
     SHIM_SRC="${BUILD_DIR}/shim.efi"
 fi
 
 rm -rf "${ROOTFS_DIR}"
-
 depmod -b "${INITRAMFS_DIR}" "${KVER}"
 
 MOD_COUNT=$(find "${INITRAMFS_DIR}/lib/modules" -name '*.ko' | wc -l)
 MOD_SIZE=$(du -sh "${INITRAMFS_DIR}/lib/modules" | awk '{print $1}')
 echo "  模块：${MOD_COUNT} 个文件，${MOD_SIZE}"
 
-# 打包 cpio 归档
 echo "  创建 initramfs 归档 ..."
 cd "${INITRAMFS_DIR}"
 find . -print0 | cpio --null -o -H newc --owner root:root 2>/dev/null | zstd -${ZSTD_LEVEL} > "${BUILD_DIR}/initrd.img"
@@ -421,53 +325,38 @@ cd "${SCRIPT_DIR}"
 INITRD_SIZE=$(ls -lh "${BUILD_DIR}/initrd.img" | awk '{print $5}')
 echo "  Initramfs 大小：${INITRD_SIZE}"
 
-# initramfs 打包完成，释放空间
 rm -rf "${INITRAMFS_DIR}"
-
 echo "  Phase 3 完成。"
 
 # =============================================================================
 # Phase 4: 打包镜像容器
 # =============================================================================
-
-echo ""
-echo "[Phase 4] 打包镜像容器 ..."
+echo ""; echo "[Phase 4] 打包镜像容器 ..."
 
 mv "${BUILD_DIR}/temp.img" "${BUILD_DIR}/image.img"
-
-IMG_SIZE=$(ls -lh "${BUILD_DIR}/image.img" | awk '{print $5}')
-echo "  原始镜像大小：${IMG_SIZE}"
+echo "  原始镜像大小：$(ls -lh "${BUILD_DIR}/image.img" | awk '{print $5}')"
 
 echo "  创建 squashfs（zstd）..."
 mksquashfs "${BUILD_DIR}/image.img" "${BUILD_DIR}/image.squashfs" \
     -comp zstd -Xcompression-level ${ZSTD_LEVEL} -no-progress -no-xattrs
 
-SQFS_SIZE=$(ls -lh "${BUILD_DIR}/image.squashfs" | awk '{print $5}')
-echo "  Squashfs 大小：${SQFS_SIZE}"
-
-# 镜像源文件不再需要，释放空间
+echo "  Squashfs 大小：$(ls -lh "${BUILD_DIR}/image.squashfs" | awk '{print $5}')"
 rm -f "${BUILD_DIR}/image.img"
-
 echo "  Phase 4 完成。"
 
 # =============================================================================
 # Phase 5: 组装 ISO 文件系统结构
 # =============================================================================
-
-echo ""
-echo "[Phase 5] 组装 ISO 结构 ..."
+echo ""; echo "[Phase 5] 组装 ISO 结构 ..."
 
 mkdir -p "${ISO_DIR}/boot"
 mv "${VMLINUZ}" "${ISO_DIR}/boot/vmlinuz"
 mv "${BUILD_DIR}/initrd.img" "${ISO_DIR}/boot/initrd.img"
 mv "${BUILD_DIR}/image.squashfs" "${ISO_DIR}/image.squashfs"
 
-# Syslinux（BIOS 启动，仅 amd64）
 if [[ "${HAS_BIOS}" -eq 1 ]]; then
-    if [[ -z "${ISOLINUX_BIN}" || -z "${LDLINUX_C32}" || -z "${ISOHDPFX_PATH}" ]]; then
-        echo "错误：未找到 syslinux 引导文件。请安装 syslinux-common 和 isolinux 包。" >&2
-        exit 1
-    fi
+    [[ -n "${ISOLINUX_BIN}" && -n "${LDLINUX_C32}" && -n "${ISOHDPFX_PATH}" ]] || \
+        die "未找到 syslinux 引导文件。请安装 syslinux-common 和 isolinux 包。"
 
     mkdir -p "${ISO_DIR}/boot/syslinux"
     cp "${ISOLINUX_BIN}"  "${ISO_DIR}/boot/syslinux/isolinux.bin"
@@ -488,20 +377,13 @@ LABEL imgflash
 EOF
 fi
 
-# EFI 启动
-# SB=1: shim → GRUB → 内核
-# SB=0: GRUB → 内核
-
-# 1. 先把文件集结到 ISO 根目录
 mkdir -p "${ISO_DIR}/EFI/BOOT"
-
 src="${GRUB_SRC}"
 [[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && src="${SHIM_SRC}"
 
 cp "$src" "${ISO_DIR}/EFI/BOOT/${EFI_SHIM_NAME}"
 [[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && cp "${GRUB_SRC}" "${ISO_DIR}/EFI/BOOT/${EFI_GRUB_NAME}"
 
-# 2. 完整菜单配置
 TIMEOUT_STYLE=$([[ "${BOOT_TIMEOUT}" -eq 0 ]] && echo "hidden" || echo "menu")
 
 cat > "${ISO_DIR}/EFI/BOOT/grub.cfg" << EOF
@@ -516,12 +398,11 @@ menuentry "ImgFlash" {
 }
 EOF
 
-# 3. 制作 efi.img
 mkdir -p "${ISO_DIR}/boot/grub"
 EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
-SOURCE_KB=$(du -skL "${ISO_DIR}/EFI/BOOT" | awk '{print $1}')
-FINAL_KB=$(( SOURCE_KB + 512 ))
+FINAL_KB=$(( $(du -skL "${ISO_DIR}/EFI/BOOT" | awk '{print $1}') + 512 ))
 echo "  EFI 镜像: ${FINAL_KB} KB"
+
 dd if=/dev/zero of="${EFI_IMG}" bs=1k count="${FINAL_KB}" 2>/dev/null
 mkfs.vfat "${EFI_IMG}" >/dev/null
 
@@ -533,9 +414,7 @@ echo "  Phase 5 完成。"
 # =============================================================================
 # Phase 6: 生成最终 ISO
 # =============================================================================
-
-echo ""
-echo "[Phase 6] 生成 ISO ..."
+echo ""; echo "[Phase 6] 生成 ISO ..."
 
 FINAL_ISO="${OUTPUT_DIR}/${ISO_NAME}.iso"
 
@@ -570,17 +449,12 @@ else
         "${ISO_DIR}"
 fi
 
-# ISO 已生成，释放 ISO 目录空间
 rm -rf "${ISO_DIR}"
-
-# CI 用 sudo 构建时产物归 root，修正属主
 [ "$(uname)" = "Linux" ] && chown "$(id -u):$(id -g)" "${FINAL_ISO}" 2>/dev/null || true
 
 BUILD_SUCCESS=1
 
-echo ""
-echo "=================="
+echo ""; echo "=================="
 echo "  构建完成！"
 echo "=================="
-ISO_SIZE=$(du -h "${FINAL_ISO}" | awk '{print $1}')
-echo "  产物：${FINAL_ISO} (${ISO_SIZE})"
+echo "  产物：${FINAL_ISO} ($(du -h "${FINAL_ISO}" | awk '{print $1}'))"

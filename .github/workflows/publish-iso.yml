@@ -42,6 +42,9 @@ on:
         description: '不使用缓存，强制重新构建'
         type: boolean
         default: false
+      sha256:
+        description: 'SHA256 校验值（可选）'
+        required: false
 
 env:
   TARGET: ${{ github.event.inputs.arch == 'amd64' && 'x86_64-unknown-linux-musl' || 'aarch64-unknown-linux-musl' }}
@@ -147,10 +150,14 @@ jobs:
       - name: "构建 ISO"
         run: |
           mkdir -p output binaries
+          ARGS="-u ${{ github.event.inputs.download_url }}"
+          if [ -n "${{ github.event.inputs.sha256 }}" ]; then
+            ARGS="$ARGS -c ${{ github.event.inputs.sha256 }}"
+          fi
           docker run --rm --privileged \
             -v "$(pwd)/binaries:/build/binaries" \
             -v "$(pwd)/output:/build/output" \
-            imgflash -u ${{ github.event.inputs.download_url }}
+            imgflash $ARGS
 
       - name: "获取 ISO 文件名"
         id: iso_file
@@ -194,14 +201,26 @@ jobs:
           esac
           rm -f "${{ steps.iso_file.outputs.file }}"
 
-      - name: "删除旧版 Release 和 Tag"
+      - name: "删除旧标签"
         env:
           RELEASE_NAME: ${{ github.event.inputs.release_name }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG_NAME="${RELEASE_NAME}-latest"
-          gh release delete "$TAG_NAME" -y || true
-          git push origin ":refs/tags/$TAG_NAME" || true
+          EXISTING_TAG=$(git tag -l "$TAG_NAME" | head -n 1)
+          if [ -n "$EXISTING_TAG" ]; then
+            git push --delete origin "$TAG_NAME" || true
+            git tag -d "$TAG_NAME" || true
+          fi
+
+      - name: "创建新标签"
+        env:
+          RELEASE_NAME: ${{ github.event.inputs.release_name }}
+        run: |
+          TAG_NAME="${RELEASE_NAME}-latest"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG_NAME"
+          git push origin "$TAG_NAME"
 
       - name: "创建 GitHub Release"
         id: create_release
