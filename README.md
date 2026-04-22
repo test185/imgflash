@@ -30,6 +30,10 @@
 
 </div>
 
+## 演示
+
+<img width="1918" height="1439" alt="test" src="https://github.com/user-attachments/assets/d98c549c-c015-4896-9839-631735c474e6" />
+
 ## 架构
 
 纯 initramfs-only，无 rootfs、无 overlayfs、无 init 切换：
