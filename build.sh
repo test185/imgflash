@@ -339,7 +339,7 @@ echo "  原始镜像大小：$(ls -lh "${BUILD_DIR}/image.img" | awk '{print $5}
 
 echo "  创建 squashfs（zstd）..."
 mksquashfs "${BUILD_DIR}/image.img" "${BUILD_DIR}/image.squashfs" \
-    -comp zstd -Xcompression-level ${ZSTD_LEVEL} -no-progress -no-xattrs
+    -b 1M -comp zstd -Xcompression-level ${ZSTD_LEVEL} -no-progress -no-xattrs
 
 echo "  Squashfs 大小：$(ls -lh "${BUILD_DIR}/image.squashfs" | awk '{print $5}')"
 rm -f "${BUILD_DIR}/image.img"
