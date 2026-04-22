@@ -35,11 +35,11 @@ impl Default for Theme {
             warning: Color::Indexed(3),
             success: Color::Indexed(2),
 
-            disk_name_width: 14,
-            disk_size_width: 12,
-            disk_bus_width: 8,
+            disk_name_width: 10,
+            disk_size_width: 11,
+            disk_bus_width: 10,
             disk_type_width: 6,
-            disk_model_width: 22,
+            disk_model_width: 20,
             disk_fixed_width: 10,
             disk_mounted_width: 18,
 
