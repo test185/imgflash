@@ -60,6 +60,7 @@ OUTPUT_DIR="${SCRIPT_DIR}/output"
 BUILD_SUCCESS=0
 cleanup() {
     [[ "${BUILD_SUCCESS}" -eq 0 && -d "${BUILD_DIR}" ]] && { echo "清理构建目录..."; rm -rf "${BUILD_DIR}"; }
+    :
 }
 trap cleanup EXIT
 
