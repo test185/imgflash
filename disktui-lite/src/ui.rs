@@ -79,7 +79,7 @@ fn render_disks_table(app: &mut App, frame: &mut Frame, area: Rect) {
     let header = Row::new(vec![
         Cell::from("Name").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
         Cell::from("Size").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
-        Cell::from("Bus").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
+        Cell::from("Transport").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
         Cell::from("Type").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
         Cell::from("Model").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
     ])
@@ -91,10 +91,10 @@ fn render_disks_table(app: &mut App, frame: &mut Frame, area: Rect) {
         .map(|disk| {
             Row::new(vec![
                 Cell::from(disk.name.clone()),
-                Cell::from(disk.size_str()),
-                Cell::from(disk.bus.clone()),
+                Cell::from(disk.size_str.clone()),
+                Cell::from(disk.transport.clone()),
                 Cell::from(disk.disk_type.clone()),
-                Cell::from(disk.model.clone()),
+                Cell::from(disk.model.clone().unwrap_or_default()),
             ])
         })
         .collect();
@@ -132,7 +132,7 @@ fn render_disks_table(app: &mut App, frame: &mut Frame, area: Rect) {
 
 fn render_disk_summary(app: &App, frame: &mut Frame, area: Rect) {
     let text = if let Some(disk) = app.selected_disk() {
-        let fixed_str = if disk.is_fixed { "Fixed" } else { "Removable" };
+        let removable_str = if disk.is_removable { "Removable" } else { "Fixed" };
         let mount_str = if disk.is_mounted {
             if let Some(ref mp) = disk.mount_point {
                 format!("Mounted ({})", mp)
@@ -144,7 +144,7 @@ fn render_disk_summary(app: &App, frame: &mut Frame, area: Rect) {
         };
 
         Line::from(vec![
-            Span::from(format!("{} | {} | {} | {}", disk.vendor, disk.model, disk.dev_path(), fixed_str)),
+            Span::from(format!("{} | {} | {} | {}", disk.model.clone().unwrap_or_default(), disk.transport, disk.dev_path, removable_str)),
             Span::from(format!(" | {}", mount_str)),
         ])
     } else {
@@ -266,7 +266,7 @@ fn render_confirmation_dialog(app: &App, frame: &mut Frame) {
         Line::from(""),
         Line::from(vec![
             Span::styled("Target: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{} ({})", disk.dev_path(), disk.size_str()), Style::default().fg(Color::White)),
+            Span::styled(format!("{} ({})", disk.dev_path, disk.size_str), Style::default().fg(Color::White)),
         ]),
         Line::from(vec![
             Span::styled("Image:  ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),

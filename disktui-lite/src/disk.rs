@@ -6,16 +6,20 @@ use crate::utils::format_bytes;
 /// Information about a single block device, obtained via /sys/block.
 #[derive(Debug, Clone)]
 pub struct DiskInfo {
-    pub name: String,       // e.g. "sda"
-    pub size_bytes: u64,    // total size in bytes
-    pub vendor: String,
-    pub model: String,
-    pub bus: String,        // SATA, USB, NVMe, VirtIO, eMMC
-    pub disk_type: String,  // SSD, HDD
-    pub is_fixed: bool,     // true = fixed, false = removable
-    pub is_readonly: bool,
+    pub name: String,           // e.g. "sda"
+    pub dev_path: String,       // e.g. "/dev/sda"
+    pub size_bytes: u64,        // total size in bytes
+    pub size_str: String,       // human-readable size
+
+    pub transport: String,      // nvme / usb / scsi / virtio / mmc (from /sys/block directly or best guess)
+
+    pub disk_type: String,      // SSD / HDD (heuristic via queue/rotational)
+
+    pub is_removable: bool,     // true = removable (USB), false = fixed
     pub is_mounted: bool,
     pub mount_point: Option<String>,
+
+    pub model: Option<String>,  // device-reported, may be inaccurate for USB bridges
 }
 
 impl DiskInfo {
@@ -39,9 +43,7 @@ impl DiskInfo {
                 continue;
             }
 
-            if let Some(disk) = Self::from_sys_block(&name)
-                && !disk.is_readonly
-            {
+            if let Some(disk) = Self::from_sys_block(&name) {
                 disks.push(disk);
             }
         }
@@ -60,7 +62,9 @@ impl DiskInfo {
             .unwrap_or_else(|_| "1".to_string())
             .trim()
             .to_string();
-        let is_readonly = ro != "0";
+        if ro != "0" {
+            return None;
+        }
 
         let sectors: u64 = fs::read_to_string(base.join("size"))
             .unwrap_or_else(|_| "0".to_string())
@@ -69,43 +73,37 @@ impl DiskInfo {
             .unwrap_or(0);
         let size_bytes = sectors * 512;
 
-        let vendor = fs::read_to_string(base.join("device/vendor"))
-            .or_else(|_| fs::read_to_string(base.join("device/device/vendor")))
-            .unwrap_or_else(|_| "Unknown".to_string())
-            .trim()
-            .to_string();
-
         let model = fs::read_to_string(base.join("device/model"))
             .or_else(|_| fs::read_to_string(base.join("device/device/model")))
             .or_else(|_| fs::read_to_string(base.join("device/name")))
             .or_else(|_| fs::read_to_string(base.join("device/device/name")))
-            .unwrap_or_else(|_| "Unknown".to_string())
-            .trim()
-            .to_string();
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
 
         let removable: u8 = fs::read_to_string(base.join("removable"))
             .unwrap_or_else(|_| "0".to_string())
             .trim()
             .parse()
             .unwrap_or(0);
-        let is_fixed = removable == 0;
+        let is_removable = removable == 1;
 
         let (is_mounted, mount_point) = Self::check_mounted(name);
 
-        let bus = Self::detect_bus(name);
+        let transport = Self::detect_transport(name);
         let disk_type = Self::detect_disk_type(&base);
 
         Some(Self {
             name: name.to_string(),
+            dev_path: format!("/dev/{}", name),
             size_bytes,
-            vendor,
-            model,
-            bus,
+            size_str: format_bytes(size_bytes),
+            transport,
             disk_type,
-            is_fixed,
-            is_readonly,
+            is_removable,
             is_mounted,
             mount_point,
+            model,
         })
     }
 
@@ -118,7 +116,7 @@ impl DiskInfo {
         if rotational == 0 { "SSD".to_string() } else { "HDD".to_string() }
     }
 
-    fn detect_bus(name: &str) -> String {
+    fn detect_transport(name: &str) -> String {
         if name.starts_with("nvme") {
             "NVMe".to_string()
         } else if name.starts_with("vd") {
@@ -128,13 +126,13 @@ impl DiskInfo {
         } else if name.starts_with("hd") {
             "IDE".to_string()
         } else if name.starts_with("sd") {
-            Self::detect_sd_bus(name)
+            Self::detect_sd_transport(name)
         } else {
             "Unknown".to_string()
         }
     }
 
-    fn detect_sd_bus(name: &str) -> String {
+    fn detect_sd_transport(name: &str) -> String {
         let base = Path::new("/sys/block").join(name);
 
         if let Ok(link) = fs::read_link(base.join("device/subsystem")) {
@@ -156,13 +154,14 @@ impl DiskInfo {
             }
         }
 
-        if let Ok(removable) = fs::read_to_string(base.join("removable"))
-            && removable.trim() == "1"
-        {
-            return "USB".to_string();
+        if base.join("device/ata_device").is_dir() {
+            return "SATA".to_string();
+        }
+        if base.join("device/sas_device").is_dir() {
+            return "SAS".to_string();
         }
 
-        "SCSI/SATA".to_string()
+        "SCSI".to_string()
     }
 
     /// Check if the device or any of its partitions are mounted (via /proc/mounts).
@@ -193,18 +192,6 @@ impl DiskInfo {
             }
         }
         (false, None)
-    }
-
-    pub fn size_str(&self) -> String {
-        format_bytes(self.size_bytes)
-    }
-
-    pub fn dev_path(&self) -> String {
-        format!("/dev/{}", self.name)
-    }
-
-    pub fn fixed_str(&self) -> &'static str {
-        if self.is_fixed { "fixed" } else { "removable" }
     }
 
     pub fn mounted_str(&self) -> String {

@@ -105,7 +105,7 @@ impl WriteProgress {
         let pid = child.id();
         Self {
             disk_name: disk.name.clone(),
-            disk_model: disk.model.clone(),
+            disk_model: disk.model.clone().unwrap_or_default(),
             total_bytes,
             written_bytes: 0,
             speed: 0.0,
