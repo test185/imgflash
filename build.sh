@@ -301,8 +301,6 @@ for f in modules.builtin modules.builtin.modinfo modules.order; do
     [ -f "${MOD_SRC}/$f" ] && cp "${MOD_SRC}/$f" "${MOD_DEST}/"
 done
 
-find "${MOD_DEST}" -name '*.ko' -exec strip --strip-unneeded {} +
-
 cp "${VMLINUZ}"  "${BUILD_DIR}/vmlinuz"
 cp "${GRUB_SRC}" "${BUILD_DIR}/grub.efi"
 VMLINUZ="${BUILD_DIR}/vmlinuz"
