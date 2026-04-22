@@ -301,6 +301,8 @@ for f in modules.builtin modules.builtin.modinfo modules.order; do
     [ -f "${MOD_SRC}/$f" ] && cp "${MOD_SRC}/$f" "${MOD_DEST}/"
 done
 
+find "${MOD_DEST}" -name '*.ko' -exec strip --strip-unneeded {} +
+
 cp "${VMLINUZ}"  "${BUILD_DIR}/vmlinuz"
 cp "${GRUB_SRC}" "${BUILD_DIR}/grub.efi"
 VMLINUZ="${BUILD_DIR}/vmlinuz"
@@ -320,7 +322,7 @@ echo "  模块：${MOD_COUNT} 个文件，${MOD_SIZE}"
 
 echo "  创建 initramfs 归档 ..."
 cd "${INITRAMFS_DIR}"
-find . -print0 | cpio --null -o -H newc --owner root:root 2>/dev/null | zstd -${ZSTD_LEVEL} > "${BUILD_DIR}/initrd.img"
+find . -print0 | sort -z | cpio --null -o -H newc --owner root:root 2>/dev/null | zstd -${ZSTD_LEVEL} > "${BUILD_DIR}/initrd.img"
 cd "${SCRIPT_DIR}"
 
 INITRD_SIZE=$(ls -lh "${BUILD_DIR}/initrd.img" | awk '{print $5}')
@@ -339,7 +341,8 @@ echo "  原始镜像大小：$(ls -lh "${BUILD_DIR}/image.img" | awk '{print $5}
 
 echo "  创建 squashfs（zstd）..."
 mksquashfs "${BUILD_DIR}/image.img" "${BUILD_DIR}/image.squashfs" \
-    -b 1M -comp zstd -Xcompression-level ${ZSTD_LEVEL} -no-progress -no-xattrs
+    -b 1M -comp zstd -Xcompression-level ${ZSTD_LEVEL} \
+    -no-fragments -no-duplicates -no-progress -no-xattrs
 
 echo "  Squashfs 大小：$(ls -lh "${BUILD_DIR}/image.squashfs" | awk '{print $5}')"
 rm -f "${BUILD_DIR}/image.img"
