@@ -1,0 +1,66 @@
+name: "更新 BusyBox 二进制"
+
+on:
+  workflow_dispatch:
+    inputs:
+      busybox_version:
+        description: 'BusyBox 版本号（留空则自动检测最新版）'
+        required: false
+        default: ''
+
+jobs:
+  update-binaries:
+    name: "更新 binaries/"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "检出仓库"
+        uses: actions/checkout@v4
+
+      - name: "检测最新 BusyBox 版本"
+        if: ${{ github.event.inputs.busybox_version == '' }}
+        id: detect_version
+        run: |
+          BUSYBOX_VERSION=$(curl -sL --fail --retry 3 "https://busybox.net/downloads/binaries/" | \
+            grep -oP '\d+\.\d+\.\d+(?=-x86_64-linux-musl)' | \
+            sort -V | tail -1)
+          if [ -z "$BUSYBOX_VERSION" ]; then
+            echo "ERROR: Failed to detect BusyBox version!"
+            exit 1
+          fi
+          echo "Detected latest version: ${BUSYBOX_VERSION}"
+          echo "version=${BUSYBOX_VERSION}" >> $GITHUB_OUTPUT
+
+      - name: "下载 BusyBox 独立 applet"
+        env:
+          BUSYBOX_VERSION: ${{ github.event.inputs.busybox_version || steps.detect_version.outputs.version }}
+        run: |
+          BASE_URL="https://busybox.net/downloads/binaries"
+          SUFFIX="-x86_64-linux-musl/busybox"
+
+          APPLETS="SH_IS_ASH MODPROBE MOUNT"
+
+          mkdir -p binaries
+
+          for applet in ${APPLETS}; do
+            URL="${BASE_URL}/${BUSYBOX_VERSION}${SUFFIX}_${applet}"
+            echo "Downloading ${applet} from ${URL}..."
+            curl -Lf --retry 3 --retry-delay 5 -o "binaries/busybox_${applet}" "${URL}"
+            chmod +x "binaries/busybox_${applet}"
+          done
+
+          echo ""
+          echo "BusyBox version: ${BUSYBOX_VERSION}"
+          echo "Downloaded files:"
+          ls -lh binaries/
+
+      - name: "提交更改"
+        env:
+          BUSYBOX_VERSION: ${{ github.event.inputs.busybox_version || steps.detect_version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add binaries/
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "chore: update BusyBox binaries to ${BUSYBOX_VERSION}"
+          git push

@@ -250,9 +250,16 @@ mkdir -p "${INITRAMFS_DIR}"/{usr/bin,usr/sbin,lib}
 mkdir -p "${INITRAMFS_DIR}"/{media/cdrom,image,var/log,root}
 mkdir -p "${INITRAMFS_DIR}"/{dev/pts,dev/shm}
 
-cp /bin/busybox "${INITRAMFS_DIR}/bin/busybox"
-chmod +x "${INITRAMFS_DIR}/bin/busybox"
-ln -s busybox "${INITRAMFS_DIR}/bin/sh"
+if [[ "${USE_TUI}" == "1" ]]; then
+    cp "${SCRIPT_DIR}/binaries/busybox_SH_IS_ASH" "${INITRAMFS_DIR}/bin/sh"
+    cp "${SCRIPT_DIR}/binaries/busybox_MODPROBE"  "${INITRAMFS_DIR}/sbin/modprobe"
+    cp "${SCRIPT_DIR}/binaries/busybox_MOUNT"     "${INITRAMFS_DIR}/bin/mount"
+    chmod +x "${INITRAMFS_DIR}/bin/sh" "${INITRAMFS_DIR}/sbin/modprobe" "${INITRAMFS_DIR}/bin/mount"
+else
+    cp /bin/busybox "${INITRAMFS_DIR}/bin/busybox"
+    chmod +x "${INITRAMFS_DIR}/bin/busybox"
+    ln -s busybox "${INITRAMFS_DIR}/bin/sh"
+fi
 
 if [[ "${USE_TUI}" == "1" ]]; then
     [[ -f "/build/binaries/disktui-lite" ]] || die "找不到 /build/binaries/disktui-lite，请先构建 disktui-lite"

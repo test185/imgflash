@@ -24,7 +24,7 @@ const DEVICE_PREFIXES: [&str; 4] = ["sr", "sd", "nvme", "vd"];
 pub fn run_init() -> anyhow::Result<()> {
     eprintln!("ImgFlash init starting...");
 
-    install_busybox()?;
+    setup_path()?;
     mount_virtual_fs()?;
     parse_cmdline()?;
     load_modules()?;
@@ -44,16 +44,7 @@ pub fn emergency_shell(msg: &str) -> ! {
 
 // ── Phase 1: Bootstrap ─────────────────────────────────────────────────
 
-fn install_busybox() -> anyhow::Result<()> {
-    let status = std::process::Command::new("/bin/busybox")
-        .arg("--install")
-        .arg("-s")
-        .status()?;
-    if !status.success() {
-        bail!("busybox --install failed");
-    }
-    // SAFETY: This runs sequentially during early init (PID 1) before any
-    // other threads or async runtimes are spawned. No concurrent access.
+fn setup_path() -> anyhow::Result<()> {
     unsafe {
         std::env::set_var("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
     }
