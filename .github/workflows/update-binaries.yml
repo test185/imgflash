@@ -12,6 +12,8 @@ jobs:
   update-binaries:
     name: "更新 binaries/"
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: "检出仓库"
