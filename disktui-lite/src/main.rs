@@ -63,62 +63,59 @@ fn main() -> AppResult<()> {
         }
     };
 
-    loop {
-        // ── TUI main loop ────────────────────────────────────────────
-        while app.running {
-            tui.draw(|frame| ui::render(&mut app, frame))?;
+    // ── TUI main loop ────────────────────────────────────────────
+    while app.running {
+        tui.draw(|frame| ui::render(&mut app, frame))?;
 
-            // Poll dd progress
-            poll_dd_progress(&mut app);
+        // Poll dd progress
+        poll_dd_progress(&mut app);
 
-            // Handle input (100ms timeout = tick rate)
-            if crossterm::event::poll(Duration::from_millis(100))?
-                && let crossterm::event::Event::Key(key) = crossterm::event::read()?
-                && key.kind == crossterm::event::KeyEventKind::Press
+        // Handle input (100ms timeout = tick rate)
+        if crossterm::event::poll(Duration::from_millis(100))?
+            && let crossterm::event::Event::Key(key) = crossterm::event::read()?
+            && key.kind == crossterm::event::KeyEventKind::Press
+        {
+            let _ = handle_key_events(key, &mut app);
+        }
+
+        app.tick();
+    }
+
+    // ── Handle exit action ───────────────────────────────────────
+    match app.exit_action {
+        ExitAction::PowerOff => {
+            tui.exit()?;
+            print!("\x1Bc");
+            println!("Shutting down...");
+            io::stdout().flush().ok();
+            #[cfg(target_os = "linux")]
             {
-                let _ = handle_key_events(key, &mut app);
+                nix::unistd::sync();
+                let _ = nix::sys::reboot::reboot(nix::sys::reboot::RebootMode::RB_POWER_OFF);
             }
-
-            app.tick();
+            #[cfg(target_os = "linux")]
+            if is_pid1 {
+                init::emergency_halt("Poweroff failed");
+            }
+            return Ok(());
         }
-
-        // ── Handle exit action ───────────────────────────────────────
-        match app.exit_action {
-            ExitAction::PowerOff => {
-                tui.exit()?;
-                print!("\x1Bc");
-                println!("Shutting down...");
-                io::stdout().flush().ok();
-                #[cfg(target_os = "linux")]
-                {
-                    nix::unistd::sync();
-                    let _ = nix::sys::reboot::reboot(nix::sys::reboot::RebootMode::RB_POWER_OFF);
-                }
-                // If poweroff failed and we're PID 1, must not exit
-                #[cfg(target_os = "linux")]
-                if is_pid1 {
-                    init::emergency_halt("Poweroff failed");
-                }
-                return Ok(());
+        ExitAction::Reboot => {
+            tui.exit()?;
+            print!("\x1Bc");
+            println!("Rebooting...");
+            io::stdout().flush().ok();
+            #[cfg(target_os = "linux")]
+            {
+                nix::unistd::sync();
+                let _ = nix::sys::reboot::reboot(nix::sys::reboot::RebootMode::RB_AUTOBOOT);
             }
-            ExitAction::Reboot => {
-                tui.exit()?;
-                print!("\x1Bc");
-                println!("Rebooting...");
-                io::stdout().flush().ok();
-                #[cfg(target_os = "linux")]
-                {
-                    nix::unistd::sync();
-                    let _ = nix::sys::reboot::reboot(nix::sys::reboot::RebootMode::RB_AUTOBOOT);
-                }
-                #[cfg(target_os = "linux")]
-                if is_pid1 {
-                    init::emergency_halt("Reboot failed");
-                }
-                return Ok(());
+            #[cfg(target_os = "linux")]
+            if is_pid1 {
+                init::emergency_halt("Reboot failed");
             }
-            ExitAction::None => break,
+            return Ok(());
         }
+        ExitAction::None => {}
     }
 
     #[cfg(target_os = "linux")]

@@ -170,8 +170,6 @@ fn render_context_help(app: &App, frame: &mut Frame, area: Rect) {
             }
             v.push(Span::from("r ").bold().yellow());
             v.push(Span::from("Refresh | "));
-            v.push(Span::from("s ").bold().yellow());
-            v.push(Span::from("Shell | "));
             v.push(Span::from("q ").bold().yellow());
             v.push(Span::from("Shut down | "));
             v.push(Span::from("? ").bold().yellow());
