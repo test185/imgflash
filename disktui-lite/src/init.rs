@@ -35,10 +35,11 @@ pub fn run_init() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn emergency_shell(msg: &str) -> ! {
+pub fn emergency_halt(msg: &str) -> ! {
     eprintln!("ERROR: {}", msg);
-    eprintln!("Dropping to emergency shell.");
-    let _ = std::process::Command::new("/bin/sh").status();
+    eprintln!("Powering off in 5 seconds...");
+    std::thread::sleep(std::time::Duration::from_secs(5));
+    let _ = std::process::Command::new("poweroff").arg("-f").status();
     std::process::exit(1);
 }
 

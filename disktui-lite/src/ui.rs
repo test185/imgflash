@@ -540,7 +540,6 @@ fn render_help_dialog(frame: &mut Frame) {
         Line::from(""),
         Line::from("Actions:").bold().yellow(),
         Line::from("  r             - Refresh disk list"),
-        Line::from("  s             - Drop to shell"),
         Line::from("  q             - Shut down"),
         Line::from("  Esc / a       - Abort write operation"),
         Line::from(""),

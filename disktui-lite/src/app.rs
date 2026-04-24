@@ -35,7 +35,6 @@ pub enum FocusedBlock {
 pub enum ExitAction {
     #[default]
     None,
-    Shell,
     PowerOff,
     Reboot,
 }
@@ -379,11 +378,6 @@ impl App {
             p.abort();
         }
         self.exit_action = ExitAction::PowerOff;
-        self.running = false;
-    }
-
-    pub fn drop_to_shell(&mut self) {
-        self.exit_action = ExitAction::Shell;
         self.running = false;
     }
 }

@@ -33,7 +33,7 @@ fn main() -> AppResult<()> {
     // Init phase (PID 1 only)
     #[cfg(target_os = "linux")]
     if is_pid1 && let Err(e) = init::run_init() {
-        init::emergency_shell(&format!("Init failed: {}", e));
+        init::emergency_halt(&format!("Init failed: {}", e));
     }
 
     // Ignore SIGINT: we handle abort via UI (Esc), not Ctrl+C.
@@ -56,7 +56,7 @@ fn main() -> AppResult<()> {
             drop(tui);
             if is_pid1 {
                 #[cfg(target_os = "linux")]
-                init::emergency_shell(&format!("Failed to initialize: {}", e));
+                init::emergency_halt(&format!("Failed to initialize: {}", e));
             }
             eprintln!("Failed to initialize: {}", e);
             return Err(e);
@@ -84,19 +84,6 @@ fn main() -> AppResult<()> {
 
         // ── Handle exit action ───────────────────────────────────────
         match app.exit_action {
-            ExitAction::Shell => {
-                // Suspend TUI, drop to shell, then resume
-                tui.exit()?;
-                print!("\x1Bc");
-                println!("Type 'exit' to return to ImgFlash installer.");
-                io::stdout().flush().ok();
-                let _ = std::process::Command::new("/bin/sh").status();
-                // Re-enter TUI
-                tui.init()?;
-                app.running = true;
-                app.exit_action = ExitAction::None;
-                let _ = app.refresh_disks();
-            }
             ExitAction::PowerOff => {
                 tui.exit()?;
                 print!("\x1Bc");
@@ -110,7 +97,7 @@ fn main() -> AppResult<()> {
                 // If poweroff failed and we're PID 1, must not exit
                 #[cfg(target_os = "linux")]
                 if is_pid1 {
-                    init::emergency_shell("Poweroff failed");
+                    init::emergency_halt("Poweroff failed");
                 }
                 return Ok(());
             }
@@ -126,7 +113,7 @@ fn main() -> AppResult<()> {
                 }
                 #[cfg(target_os = "linux")]
                 if is_pid1 {
-                    init::emergency_shell("Reboot failed");
+                    init::emergency_halt("Reboot failed");
                 }
                 return Ok(());
             }

@@ -37,9 +37,6 @@ fn handle_disk_list(key: crossterm::event::KeyEvent, app: &mut App) -> anyhow::R
                 app.notify("Disk list refreshed", crate::notification::NotificationLevel::Info);
             }
         }
-        KeyCode::Char('s') => {
-            app.drop_to_shell();
-        }
         KeyCode::Down | KeyCode::Char('j') => {
             if !app.disks.is_empty() {
                 let i = app.disks_state.selected().unwrap_or(0);
