@@ -21,14 +21,6 @@ pub enum Screen {
     Success,
 }
 
-// ── Focused block (which panel has focus) ──────────────────────────────
-
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub enum FocusedBlock {
-    #[default]
-    DiskList,
-}
-
 // ── Exit actions ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -173,28 +165,6 @@ impl WriteProgress {
         (process_status, io)
     }
 
-    /// Check if the dd process has finished. Returns Some(success) or None if still running.
-    pub fn check_process(&mut self) -> Option<bool> {
-        if let Some(ref mut child) = self.dd_child {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    self.finished = true;
-                    self.success = status.success();
-                    self.dd_child = None; // already reaped by try_wait
-                    Some(self.success)
-                }
-                Ok(None) => None, // still running
-                Err(_) => {
-                    self.finished = true;
-                    self.success = false;
-                    Some(false)
-                }
-            }
-        } else {
-            Some(true) // already finished
-        }
-    }
-
     /// Kill the dd child process and reap it.
     pub fn abort(&mut self) {
         if let Some(ref mut child) = self.dd_child {
@@ -212,7 +182,6 @@ impl WriteProgress {
 pub struct App {
     pub running: bool,
     pub screen: Screen,
-    pub focused_block: FocusedBlock,
     pub disks: Vec<DiskInfo>,
     pub disks_state: TableState,
     pub confirm_button: ConfirmButton,
@@ -242,7 +211,6 @@ impl App {
         Ok(Self {
             running: true,
             screen: Screen::DiskList,
-            focused_block: FocusedBlock::DiskList,
             disks,
             disks_state,
             confirm_button: ConfirmButton::default(),

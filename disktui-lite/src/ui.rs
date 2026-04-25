@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table, Wrap},
 };
 
-use crate::app::{App, ConfirmButton, FocusedBlock, Screen, SuccessAction};
+use crate::app::{App, ConfirmButton, Screen, SuccessAction};
 use crate::utils::format_bytes;
 
 pub fn render(app: &mut App, frame: &mut Frame) {
@@ -56,8 +56,6 @@ fn render_main(app: &mut App, frame: &mut Frame) {
 }
 
 fn render_disks_table(app: &mut App, frame: &mut Frame, area: Rect) {
-    let focused = app.focused_block == FocusedBlock::DiskList;
-
     if !app.has_disks() {
         let block = Block::default()
             .title(" Select Target Disk ")
@@ -75,13 +73,12 @@ fn render_disks_table(app: &mut App, frame: &mut Frame, area: Rect) {
         return;
     }
 
-    let header_color = if focused { app.theme.header } else { Color::Reset };
     let header = Row::new(vec![
-        Cell::from("Name").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
-        Cell::from("Size").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
-        Cell::from("Transport").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
-        Cell::from("Type").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
-        Cell::from("Model").style(Style::default().add_modifier(Modifier::BOLD).fg(header_color)),
+        Cell::from("Name").style(Style::default().add_modifier(Modifier::BOLD).fg(app.theme.header)),
+        Cell::from("Size").style(Style::default().add_modifier(Modifier::BOLD).fg(app.theme.header)),
+        Cell::from("Transport").style(Style::default().add_modifier(Modifier::BOLD).fg(app.theme.header)),
+        Cell::from("Type").style(Style::default().add_modifier(Modifier::BOLD).fg(app.theme.header)),
+        Cell::from("Model").style(Style::default().add_modifier(Modifier::BOLD).fg(app.theme.header)),
     ])
     .bottom_margin(1);
 
@@ -113,19 +110,13 @@ fn render_disks_table(app: &mut App, frame: &mut Frame, area: Rect) {
             Block::default()
                 .title(" Select Target Disk ")
                 .borders(Borders::ALL)
-                .border_style(if focused {
-                    Style::default().fg(app.theme.focus_border)
-                } else {
-                    Style::default().fg(app.theme.normal_border)
-                })
+                .border_style(Style::default().fg(app.theme.focus_border))
                 .border_type(BorderType::default()),
         )
         .column_spacing(2)
-        .row_highlight_style(if focused {
-            Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        });
+        .row_highlight_style(
+            Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD),
+        );
 
     frame.render_stateful_widget(table, area, &mut app.disks_state);
 }
