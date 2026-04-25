@@ -281,7 +281,7 @@ fn render_confirmation_dialog(app: &App, frame: &mut Frame) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Progress dialog (real dd stats + EMA speed)
+// Progress dialog (real dd stats + instantaneous speed)
 // ═══════════════════════════════════════════════════════════════════════
 
 fn render_progress_dialog(app: &App, frame: &mut Frame) {
