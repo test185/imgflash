@@ -9,22 +9,18 @@ on:
         default: ''
 
 jobs:
-  update-binaries:
-    name: "更新 binaries/"
+  detect:
+    name: "检测 BusyBox 版本"
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
+    outputs:
+      version: ${{ steps.detect_version.outputs.version }}
     steps:
-      - name: "检出仓库"
-        uses: actions/checkout@v4
-
       - name: "检测最新 BusyBox 版本"
         if: ${{ github.event.inputs.busybox_version == '' }}
         id: detect_version
         run: |
-          BUSYBOX_VERSION=$(curl -sL --fail --retry 3 "https://busybox.net/downloads/binaries/" | \
-            grep -oP '\d+\.\d+\.\d+(?=-x86_64-linux-musl)' | \
+          BUSYBOX_VERSION=$(curl -sL --fail --retry 3 "https://busybox.net/downloads/" | \
+            grep -oP 'busybox-\K\d+\.\d+\.\d+(?=\.tar\.bz2)' | \
             sort -V | tail -1)
           if [ -z "$BUSYBOX_VERSION" ]; then
             echo "ERROR: Failed to detect BusyBox version!"
@@ -32,37 +28,116 @@ jobs:
           fi
           echo "Detected latest version: ${BUSYBOX_VERSION}"
           echo "version=${BUSYBOX_VERSION}" >> $GITHUB_OUTPUT
-
-      - name: "下载 BusyBox 独立 applet"
-        env:
-          BUSYBOX_VERSION: ${{ github.event.inputs.busybox_version || steps.detect_version.outputs.version }}
+      - name: "使用手动指定版本"
+        if: ${{ github.event.inputs.busybox_version != '' }}
+        id: manual_version
         run: |
-          BASE_URL="https://busybox.net/downloads/binaries"
-          SUFFIX="-x86_64-linux-musl/busybox"
+          echo "version=${{ github.event.inputs.busybox_version }}" >> $GITHUB_OUTPUT
 
-          APPLETS="SH_IS_ASH MODPROBE MOUNT"
+  build:
+    name: "编译 ${{ matrix.arch_dir }} BusyBox applet"
+    needs: detect
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - arch_dir: AMD64
+            cross_compile: ''
+            arch: ''
+          - arch_dir: ARM64
+            cross_compile: 'aarch64-linux-gnu-'
+            arch: 'arm64'
 
-          mkdir -p binaries
+    steps:
+      - name: "检出仓库"
+        uses: actions/checkout@v4
+
+      - name: "安装交叉编译工具链"
+        if: matrix.cross_compile != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: "下载 BusyBox 源码"
+        env:
+          BUSYBOX_VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          echo "Downloading BusyBox source ${BUSYBOX_VERSION}..."
+          curl -Lf --retry 3 -o busybox.tar.bz2 \
+            "https://busybox.net/downloads/busybox-${BUSYBOX_VERSION}.tar.bz2"
+          tar xjf busybox.tar.bz2
+
+      - name: "编译独立 applet"
+        env:
+          BUSYBOX_VERSION: ${{ needs.detect.outputs.version }}
+          CROSS_COMPILE: ${{ matrix.cross_compile }}
+          BB_ARCH: ${{ matrix.arch }}
+          ARCH_DIR: ${{ matrix.arch_dir }}
+        run: |
+          APPLETS="MODPROBE MOUNT"
+          MAKE_OPTS="-j$(nproc)"
+          [[ -n "${CROSS_COMPILE}" ]] && MAKE_OPTS="${MAKE_OPTS} ARCH=${BB_ARCH} CROSS_COMPILE=${CROSS_COMPILE}"
+          mkdir -p "binaries/${ARCH_DIR}"
+
+          cd "busybox-${BUSYBOX_VERSION}"
+
+          # 先做一次完整编译以生成 include/applets.h
+          make defconfig ${MAKE_OPTS}
+          sed -i 's/CONFIG_STATIC=n/CONFIG_STATIC=y/' .config
+          make ${MAKE_OPTS}
+
+          # 用官方 make_single_applets.sh 的方法构建独立 applet
+          cfg="$(cat .config)"
+          apps="$(grep ^IF_ include/applets.h \
+            | grep -v '^IF_FEATURE_' \
+            | sed 's/IF_\([A-Z0-9._-]*\)(.*/\1/' \
+            | grep -v '^BUSYBOX$' \
+            | sort | uniq)"
+          allno="$cfg"
+          for app in $apps; do
+            allno="$(echo "$allno" | sed "s/^CONFIG_${app}=y\$/# CONFIG_${app} is not set/")"
+          done
+          allno="$(echo "$allno" | sed 's/^CONFIG_BUSYBOX=y$/# CONFIG_BUSYBOX is not set/')"
+          allno="$(echo "$allno" | sed 's/^\(CONFIG_.*_DEPENDENCIES\)=y$/# \1 is not set/')"
 
           for applet in ${APPLETS}; do
-            URL="${BASE_URL}/${BUSYBOX_VERSION}${SUFFIX}_${applet}"
-            echo "Downloading ${applet} from ${URL}..."
-            curl -Lf --retry 3 --retry-delay 5 -o "binaries/busybox_${applet}" "${URL}"
-            chmod +x "binaries/busybox_${applet}"
+            echo "Building ${ARCH_DIR} standalone applet: ${applet}..."
+            mv .config .config.SV
+            echo "CONFIG_${applet}=y" > .config
+            echo "$allno" | sed "/^# CONFIG_${applet} is not set\$/d" >> .config
+            if [ "${applet}" != "SH_IS_ASH" ] && [ "${applet}" != "SH_IS_HUSH" ]; then
+              sed '/CONFIG_SH_IS_NONE/d' -i .config
+              echo "CONFIG_SH_IS_NONE=y" >> .config
+            fi
+            yes '' | make oldconfig ${MAKE_OPTS} >/dev/null 2>&1
+            make ${MAKE_OPTS} >/dev/null 2>&1
+            if grep -q '^#define NUM_APPLETS 1$' include/NUM_APPLETS.h; then
+              cp busybox "../binaries/${ARCH_DIR}/busybox_${applet}"
+              chmod +x "../binaries/${ARCH_DIR}/busybox_${applet}"
+              echo "  OK: $(ls -lh "../binaries/${ARCH_DIR}/busybox_${applet}" | awk '{print $5}')"
+            else
+              echo "  WARNING: NUM_APPLETS != 1 for ${applet}"
+              cp busybox "../binaries/${ARCH_DIR}/busybox_${applet}"
+              chmod +x "../binaries/${ARCH_DIR}/busybox_${applet}"
+            fi
+            mv .config.SV .config
           done
 
-          echo ""
-          echo "BusyBox version: ${BUSYBOX_VERSION}"
-          echo "Downloaded files:"
-          ls -lh binaries/
+          cd ..
+          echo "${ARCH_DIR} files:"
+          ls -lh "binaries/${ARCH_DIR}/"
 
       - name: "提交更改"
         env:
-          BUSYBOX_VERSION: ${{ github.event.inputs.busybox_version || steps.detect_version.outputs.version }}
+          BUSYBOX_VERSION: ${{ needs.detect.outputs.version }}
+          ARCH_DIR: ${{ matrix.arch_dir }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add binaries/
+          git add "binaries/${ARCH_DIR}/"
           git diff --cached --quiet && echo "No changes to commit" && exit 0
-          git commit -m "chore: update BusyBox binaries to ${BUSYBOX_VERSION}"
+          git commit -m "chore: update BusyBox ${ARCH_DIR} binaries to ${BUSYBOX_VERSION}"
+          git pull --rebase || true
           git push
