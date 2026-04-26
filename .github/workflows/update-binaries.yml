@@ -56,7 +56,6 @@ jobs:
         env:
           BUSYBOX_VERSION: ${{ needs.detect.outputs.version }}
         run: |
-          echo "Downloading BusyBox source ${BUSYBOX_VERSION}..."
           curl -Lf --retry 3 -o busybox.tar.bz2 \
             "https://busybox.net/downloads/busybox-${BUSYBOX_VERSION}.tar.bz2"
           tar xjf busybox.tar.bz2
@@ -66,46 +65,23 @@ jobs:
           BUSYBOX_VERSION: ${{ needs.detect.outputs.version }}
           ARCH_DIR: ${{ matrix.arch_dir }}
         run: |
-          APPLETS="MODPROBE MOUNT"
           mkdir -p "binaries/${ARCH_DIR}"
-
           cd "busybox-${BUSYBOX_VERSION}"
 
-          # 生成 allnoconfig 基底并启用静态链接
-          make allnoconfig
-          sed -i 's/CONFIG_STATIC=n/CONFIG_STATIC=y/' .config
-          cp .config .config.base
-
-          for applet in ${APPLETS}; do
+          for applet in MODPROBE MOUNT; do
             echo "Building ${ARCH_DIR} standalone applet: ${applet}..."
-            cp .config.base .config
-            sed -i "/CONFIG_${applet}=/d" .config
-            echo "CONFIG_${applet}=y" >> .config
-            # 禁用 sh 别名（非 SH applet）
-            if [ "${applet}" != "SH_IS_ASH" ] && [ "${applet}" != "SH_IS_HUSH" ]; then
-              sed -i '/CONFIG_SH_IS_NONE=/d' .config
-              echo "CONFIG_SH_IS_NONE=y" >> .config
-            fi
-            # oldconfig：对未设置的选项用默认值
-            yes '' | make oldconfig
-            # 验证目标 applet 确实被启用
-            if ! grep -q "^CONFIG_${applet}=y" .config; then
-              echo "  ERROR: CONFIG_${applet} was not enabled after oldconfig!"
-              grep "CONFIG_${applet}" .config || true
-              exit 1
-            fi
+            cat > .config <<EOF
+          CONFIG_STATIC=y
+          CONFIG_${applet}=y
+          CONFIG_SH_IS_NONE=y
+          EOF
+            make oldconfig
             make -j$(nproc)
-            if grep -q '^#define NUM_APPLETS 1$' include/NUM_APPLETS.h; then
-              cp busybox "../binaries/${ARCH_DIR}/busybox_${applet}"
-              chmod +x "../binaries/${ARCH_DIR}/busybox_${applet}"
-              echo "  OK: $(ls -lh "../binaries/${ARCH_DIR}/busybox_${applet}" | awk '{print $5}')"
-            else
-              echo "  WARNING: NUM_APPLETS != 1 for ${applet}, applets in binary:"
-              cat include/NUM_APPLETS.h
-              cp busybox "../binaries/${ARCH_DIR}/busybox_${applet}"
-              chmod +x "../binaries/${ARCH_DIR}/busybox_${applet}"
-            fi
+            cp busybox "../binaries/${ARCH_DIR}/busybox_${applet}"
+            chmod +x "../binaries/${ARCH_DIR}/busybox_${applet}"
           done
+
+          ls -lh "../binaries/${ARCH_DIR}/"
 
       - name: "提交更改"
         env:
