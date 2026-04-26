@@ -76,9 +76,10 @@ jobs:
             make allnoconfig
             sed -i "s/# CONFIG_${applet} is not set/CONFIG_${applet}=y/" .config
             sed -i 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
+            sed -i 's/# CONFIG_MODULES is not set/CONFIG_MODULES=y/' .config
             sed -i 's/CONFIG_SH_IS_ASH=y/# CONFIG_SH_IS_ASH is not set/; s/# CONFIG_SH_IS_NONE is not set/CONFIG_SH_IS_NONE=y/' .config
             sed -i 's/CONFIG_INSTALL_APPLET_SYMLINKS=y/# CONFIG_INSTALL_APPLET_SYMLINKS is not set/; s/# CONFIG_INSTALL_APPLET_DONT is not set/CONFIG_INSTALL_APPLET_DONT=y/' .config
-            yes n | make oldconfig
+            yes '' | make oldconfig
             grep -q "CONFIG_${applet}=y" .config || { echo "ERROR: CONFIG_${applet} not enabled"; exit 1; }
             echo "=== Enabled applets ==="
             grep '=y' .config | grep -v '^#' || true
