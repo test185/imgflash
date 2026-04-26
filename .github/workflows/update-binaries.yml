@@ -90,7 +90,7 @@ jobs:
             grep -q "CONFIG_${applet}=y" .config || { echo "ERROR: CONFIG_${applet} not enabled"; exit 1; }
             echo "=== Enabled applets ==="
             grep '=y' .config | grep -v '^#' || true
-            make -j$(nproc) CC=musl-gcc
+            make -j$(nproc) CC=musl-gcc EXTRA_CFLAGS="-idirafter /usr/include"
             cp busybox "../binaries/${ARCH_DIR}/busybox_${applet}"
             chmod +x "../binaries/${ARCH_DIR}/busybox_${applet}"
           done
