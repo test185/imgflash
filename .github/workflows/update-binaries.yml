@@ -71,7 +71,7 @@ jobs:
           for applet in MODPROBE MOUNT; do
             echo "Building ${ARCH_DIR} standalone applet: ${applet}..."
             make allnoconfig
-            scripts/config --enable "${applet}"
+            sed -i "s/# CONFIG_${applet} is not set/CONFIG_${applet}=y/" .config
             make oldconfig
             grep -q "CONFIG_${applet}=y" .config || { echo "ERROR: CONFIG_${applet} not enabled"; exit 1; }
             make -j$(nproc)
