@@ -35,7 +35,7 @@ jobs:
           echo "version=${{ github.event.inputs.busybox_version }}" >> $GITHUB_OUTPUT
 
   build:
-    name: "编译 ${{ matrix.arch_dir }} BusyBox applet"
+    name: "编译 ${{ matrix.arch_dir }}"
     needs: detect
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -71,38 +71,36 @@ jobs:
 
           cd "busybox-${BUSYBOX_VERSION}"
 
+          # 生成 allnoconfig 基底并启用静态链接
           make allnoconfig
           sed -i 's/CONFIG_STATIC=n/CONFIG_STATIC=y/' .config
+          cp .config .config.base
 
           for applet in ${APPLETS}; do
             echo "Building ${ARCH_DIR} standalone applet: ${applet}..."
-            # 保存 allnoconfig 基底
-            cp .config .config.allno
-            # 开启目标 applet
-            sed -i "s/^# CONFIG_${applet} is not set$/CONFIG_${applet}=y/" .config
-            # 禁用 sh 别名（非 SH applet）
+            cp .config.base .config
+            echo "CONFIG_${applet}=y" >> .config
             if [ "${applet}" != "SH_IS_ASH" ] && [ "${applet}" != "SH_IS_HUSH" ]; then
-              sed -i 's/^CONFIG_SH_IS_NONE=y$/# CONFIG_SH_IS_NONE is not set/' .config
               echo "CONFIG_SH_IS_NONE=y" >> .config
             fi
-            yes '' | make oldconfig >/dev/null 2>&1
-            make -j$(nproc) >/dev/null 2>&1
+            yes '' | make oldconfig
+            if ! grep -q "^CONFIG_${applet}=y" .config; then
+              echo "  ERROR: CONFIG_${applet} was not enabled after oldconfig!"
+              grep "CONFIG_${applet}" .config || true
+              exit 1
+            fi
+            make -j$(nproc)
             if grep -q '^#define NUM_APPLETS 1$' include/NUM_APPLETS.h; then
               cp busybox "../binaries/${ARCH_DIR}/busybox_${applet}"
               chmod +x "../binaries/${ARCH_DIR}/busybox_${applet}"
               echo "  OK: $(ls -lh "../binaries/${ARCH_DIR}/busybox_${applet}" | awk '{print $5}')"
             else
-              echo "  WARNING: NUM_APPLETS != 1 for ${applet}"
+              echo "  WARNING: NUM_APPLETS != 1 for ${applet}, applets in binary:"
+              cat include/NUM_APPLETS.h
               cp busybox "../binaries/${ARCH_DIR}/busybox_${applet}"
               chmod +x "../binaries/${ARCH_DIR}/busybox_${applet}"
             fi
-            # 恢复 allnoconfig 基底
-            mv .config.allno .config
           done
-
-          cd ..
-          echo "${ARCH_DIR} files:"
-          ls -lh "binaries/${ARCH_DIR}/"
 
       - name: "提交更改"
         env:
