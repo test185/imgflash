@@ -72,8 +72,11 @@ jobs:
             echo "Building ${ARCH_DIR} standalone applet: ${applet}..."
             make allnoconfig
             sed -i "s/# CONFIG_${applet} is not set/CONFIG_${applet}=y/" .config
-            make oldconfig
+            sed -i 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
+            yes '' | make oldconfig
             grep -q "CONFIG_${applet}=y" .config || { echo "ERROR: CONFIG_${applet} not enabled"; exit 1; }
+            echo "=== Enabled applets ==="
+            grep '=y' .config | grep -v '^#' || true
             make -j$(nproc)
             cp busybox "../binaries/${ARCH_DIR}/busybox_${applet}"
             chmod +x "../binaries/${ARCH_DIR}/busybox_${applet}"
