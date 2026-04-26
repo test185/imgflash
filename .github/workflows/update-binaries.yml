@@ -77,6 +77,10 @@ jobs:
             sed -i "s/# CONFIG_${applet} is not set/CONFIG_${applet}=y/" .config
             sed -i 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
             sed -i 's/# CONFIG_MODULES is not set/CONFIG_MODULES=y/' .config
+            sed -i '/CONFIG_DEFAULT_MODULES_DIR/d' .config
+            sed -i '/CONFIG_DEFAULT_DEPMOD_FILE/d' .config
+            echo 'CONFIG_DEFAULT_MODULES_DIR="/lib/modules"' >> .config
+            echo 'CONFIG_DEFAULT_DEPMOD_FILE="modules.dep"' >> .config
             sed -i 's/CONFIG_SH_IS_ASH=y/# CONFIG_SH_IS_ASH is not set/; s/# CONFIG_SH_IS_NONE is not set/CONFIG_SH_IS_NONE=y/' .config
             sed -i 's/CONFIG_INSTALL_APPLET_SYMLINKS=y/# CONFIG_INSTALL_APPLET_SYMLINKS is not set/; s/# CONFIG_INSTALL_APPLET_DONT is not set/CONFIG_INSTALL_APPLET_DONT=y/' .config
             yes '' | make oldconfig
