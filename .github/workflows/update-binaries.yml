@@ -70,12 +70,10 @@ jobs:
 
           for applet in MODPROBE MOUNT; do
             echo "Building ${ARCH_DIR} standalone applet: ${applet}..."
-            cat > .config <<EOF
-          CONFIG_STATIC=y
-          CONFIG_${applet}=y
-          CONFIG_SH_IS_NONE=y
-          EOF
-            yes n | make oldconfig
+            make allnoconfig
+            scripts/config --enable "${applet}"
+            make oldconfig
+            grep -q "CONFIG_${applet}=y" .config || { echo "ERROR: CONFIG_${applet} not enabled"; exit 1; }
             make -j$(nproc)
             cp busybox "../binaries/${ARCH_DIR}/busybox_${applet}"
             chmod +x "../binaries/${ARCH_DIR}/busybox_${applet}"
