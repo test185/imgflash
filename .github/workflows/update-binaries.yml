@@ -79,11 +79,16 @@ jobs:
           for applet in ${APPLETS}; do
             echo "Building ${ARCH_DIR} standalone applet: ${applet}..."
             cp .config.base .config
+            sed -i "/CONFIG_${applet}=/d" .config
             echo "CONFIG_${applet}=y" >> .config
+            # 禁用 sh 别名（非 SH applet）
             if [ "${applet}" != "SH_IS_ASH" ] && [ "${applet}" != "SH_IS_HUSH" ]; then
+              sed -i '/CONFIG_SH_IS_NONE=/d' .config
               echo "CONFIG_SH_IS_NONE=y" >> .config
             fi
+            # oldconfig：对未设置的选项用默认值
             yes '' | make oldconfig
+            # 验证目标 applet 确实被启用
             if ! grep -q "^CONFIG_${applet}=y" .config; then
               echo "  ERROR: CONFIG_${applet} was not enabled after oldconfig!"
               grep "CONFIG_${applet}" .config || true
