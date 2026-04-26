@@ -75,7 +75,7 @@ jobs:
           CONFIG_${applet}=y
           CONFIG_SH_IS_NONE=y
           EOF
-            yes '' | make oldconfig
+            yes n | make oldconfig
             make -j$(nproc)
             cp busybox "../binaries/${ARCH_DIR}/busybox_${applet}"
             chmod +x "../binaries/${ARCH_DIR}/busybox_${applet}"
