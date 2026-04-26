@@ -52,7 +52,7 @@ env:
 jobs:
   build-and-publish:
     name: "构建并发布 ISO (${{ github.event.inputs.arch }})"
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.inputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     permissions:
       contents: write
 

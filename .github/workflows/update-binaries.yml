@@ -37,28 +37,20 @@ jobs:
   build:
     name: "编译 ${{ matrix.arch_dir }} BusyBox applet"
     needs: detect
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
     strategy:
       matrix:
         include:
           - arch_dir: AMD64
-            cross_compile: ''
-            arch: ''
+            runner: ubuntu-latest
           - arch_dir: ARM64
-            cross_compile: 'aarch64-linux-gnu-'
-            arch: 'arm64'
+            runner: ubuntu-24.04-arm
 
     steps:
       - name: "检出仓库"
         uses: actions/checkout@v4
-
-      - name: "安装交叉编译工具链"
-        if: matrix.cross_compile != ''
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: "下载 BusyBox 源码"
         env:
@@ -72,47 +64,29 @@ jobs:
       - name: "编译独立 applet"
         env:
           BUSYBOX_VERSION: ${{ needs.detect.outputs.version }}
-          CROSS_COMPILE: ${{ matrix.cross_compile }}
-          BB_ARCH: ${{ matrix.arch }}
           ARCH_DIR: ${{ matrix.arch_dir }}
         run: |
           APPLETS="MODPROBE MOUNT"
-          MAKE_OPTS="-j$(nproc)"
-          [[ -n "${CROSS_COMPILE}" ]] && MAKE_OPTS="${MAKE_OPTS} ARCH=${BB_ARCH} CROSS_COMPILE=${CROSS_COMPILE}"
           mkdir -p "binaries/${ARCH_DIR}"
 
           cd "busybox-${BUSYBOX_VERSION}"
 
-          # 先做一次完整编译以生成 include/applets.h
-          make defconfig ${MAKE_OPTS}
+          make allnoconfig
           sed -i 's/CONFIG_STATIC=n/CONFIG_STATIC=y/' .config
-          make ${MAKE_OPTS}
-
-          # 用官方 make_single_applets.sh 的方法构建独立 applet
-          cfg="$(cat .config)"
-          apps="$(grep ^IF_ include/applets.h \
-            | grep -v '^IF_FEATURE_' \
-            | sed 's/IF_\([A-Z0-9._-]*\)(.*/\1/' \
-            | grep -v '^BUSYBOX$' \
-            | sort | uniq)"
-          allno="$cfg"
-          for app in $apps; do
-            allno="$(echo "$allno" | sed "s/^CONFIG_${app}=y\$/# CONFIG_${app} is not set/")"
-          done
-          allno="$(echo "$allno" | sed 's/^CONFIG_BUSYBOX=y$/# CONFIG_BUSYBOX is not set/')"
-          allno="$(echo "$allno" | sed 's/^\(CONFIG_.*_DEPENDENCIES\)=y$/# \1 is not set/')"
 
           for applet in ${APPLETS}; do
             echo "Building ${ARCH_DIR} standalone applet: ${applet}..."
-            mv .config .config.SV
-            echo "CONFIG_${applet}=y" > .config
-            echo "$allno" | sed "/^# CONFIG_${applet} is not set\$/d" >> .config
+            # 保存 allnoconfig 基底
+            cp .config .config.allno
+            # 开启目标 applet
+            sed -i "s/^# CONFIG_${applet} is not set$/CONFIG_${applet}=y/" .config
+            # 禁用 sh 别名（非 SH applet）
             if [ "${applet}" != "SH_IS_ASH" ] && [ "${applet}" != "SH_IS_HUSH" ]; then
-              sed '/CONFIG_SH_IS_NONE/d' -i .config
+              sed -i 's/^CONFIG_SH_IS_NONE=y$/# CONFIG_SH_IS_NONE is not set/' .config
               echo "CONFIG_SH_IS_NONE=y" >> .config
             fi
-            yes '' | make oldconfig ${MAKE_OPTS} >/dev/null 2>&1
-            make ${MAKE_OPTS} >/dev/null 2>&1
+            yes '' | make oldconfig >/dev/null 2>&1
+            make -j$(nproc) >/dev/null 2>&1
             if grep -q '^#define NUM_APPLETS 1$' include/NUM_APPLETS.h; then
               cp busybox "../binaries/${ARCH_DIR}/busybox_${applet}"
               chmod +x "../binaries/${ARCH_DIR}/busybox_${applet}"
@@ -122,7 +96,8 @@ jobs:
               cp busybox "../binaries/${ARCH_DIR}/busybox_${applet}"
               chmod +x "../binaries/${ARCH_DIR}/busybox_${applet}"
             fi
-            mv .config.SV .config
+            # 恢复 allnoconfig 基底
+            mv .config.allno .config
           done
 
           cd ..
