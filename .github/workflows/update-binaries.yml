@@ -60,6 +60,9 @@ jobs:
             "https://busybox.net/downloads/busybox-${BUSYBOX_VERSION}.tar.bz2"
           tar xjf busybox.tar.bz2
 
+      - name: "安装 musl 工具链"
+        run: sudo apt-get install -y musl-tools
+
       - name: "编译独立 applet"
         env:
           BUSYBOX_VERSION: ${{ needs.detect.outputs.version }}
@@ -79,7 +82,7 @@ jobs:
             grep -q "CONFIG_${applet}=y" .config || { echo "ERROR: CONFIG_${applet} not enabled"; exit 1; }
             echo "=== Enabled applets ==="
             grep '=y' .config | grep -v '^#' || true
-            make -j$(nproc)
+            make -j$(nproc) CC=musl-gcc
             cp busybox "../binaries/${ARCH_DIR}/busybox_${applet}"
             chmod +x "../binaries/${ARCH_DIR}/busybox_${applet}"
           done
