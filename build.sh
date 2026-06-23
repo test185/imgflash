@@ -85,6 +85,14 @@ retry() {
     done
 }
 
+format_size() {
+    local bytes=$(du -sb "$1" 2>/dev/null | awk '{print $1}')
+    [ -z "$bytes" ] && { echo "0.00 B"; return; }
+    local unit="MiB" divisor=$((1024*1024))
+    [ "$bytes" -ge $((1024*1024*1024)) ] && { unit="GiB"; divisor=$((1024*1024*1024)); }
+    awk "BEGIN { printf \"%.2f %s\", $bytes / $divisor, \"$unit\" }"
+}
+
 download_image() {
     local url="$1" checksum="$2"
     echo "  正在下载：${url}"
@@ -321,17 +329,14 @@ fi
 rm -rf "${ROOTFS_DIR}"
 depmod -b "${INITRAMFS_DIR}" "${KVER}"
 
-MOD_COUNT=$(find "${INITRAMFS_DIR}/lib/modules" -name '*.ko' | wc -l)
-MOD_SIZE=$(du -sh "${INITRAMFS_DIR}/lib/modules" | awk '{print $1}')
-echo "  模块：${MOD_COUNT} 个文件，${MOD_SIZE}"
+echo "  模块：$(find "${INITRAMFS_DIR}/lib/modules" -name '*.ko' | wc -l) 个文件，$(format_size "${INITRAMFS_DIR}/lib/modules")"
 
 echo "  创建 initramfs 归档 ..."
 cd "${INITRAMFS_DIR}"
 find . -print0 | sort -z | cpio --null -o -H newc --owner root:root 2>/dev/null | zstd -${ZSTD_LEVEL} > "${BUILD_DIR}/initrd.img"
 cd "${SCRIPT_DIR}"
 
-INITRD_SIZE=$(ls -lh "${BUILD_DIR}/initrd.img" | awk '{print $5}')
-echo "  Initramfs 大小：${INITRD_SIZE}"
+echo "  Initramfs 大小：$(format_size "${BUILD_DIR}/initrd.img")"
 
 rm -rf "${INITRAMFS_DIR}"
 echo "  Phase 3 完成。"
@@ -342,14 +347,14 @@ echo "  Phase 3 完成。"
 echo ""; echo "[Phase 4] 打包镜像容器 ..."
 
 mv "${BUILD_DIR}/temp.img" "${BUILD_DIR}/image.img"
-echo "  原始镜像大小：$(ls -lh "${BUILD_DIR}/image.img" | awk '{print $5}')"
+echo "  原始镜像大小：$(format_size "${BUILD_DIR}/image.img")"
 
 echo "  创建 squashfs（zstd）..."
 mksquashfs "${BUILD_DIR}/image.img" "${BUILD_DIR}/image.squashfs" \
     -b 1M -comp zstd -Xcompression-level ${ZSTD_LEVEL} \
     -no-fragments -no-duplicates -no-progress -no-xattrs
 
-echo "  Squashfs 大小：$(ls -lh "${BUILD_DIR}/image.squashfs" | awk '{print $5}')"
+echo "  Squashfs 大小：$(format_size "${BUILD_DIR}/image.squashfs")"
 rm -f "${BUILD_DIR}/image.img"
 echo "  Phase 4 完成。"
 
@@ -466,4 +471,4 @@ BUILD_SUCCESS=1
 echo ""; echo "=================="
 echo "  构建完成！"
 echo "=================="
-echo "  产物：${FINAL_ISO} ($(du -h "${FINAL_ISO}" | awk '{print $1}'))"
+echo "  产物：${FINAL_ISO} ($(format_size "${FINAL_ISO}"))"
