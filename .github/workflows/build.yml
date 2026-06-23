@@ -152,7 +152,7 @@ jobs:
             imgflash $ARGS
 
       - name: "上传 ISO 产物"
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: imgflash-iso-${{ github.event.inputs.arch }}
           path: output/*.iso
