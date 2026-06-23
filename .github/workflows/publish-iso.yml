@@ -70,7 +70,7 @@ jobs:
           swap-storage: false
 
       - name: "检出仓库"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           sparse-checkout: |
             binaries
@@ -135,10 +135,10 @@ jobs:
         run: sed -i 's/^USE_TUI=.*/USE_TUI=0/' build.env
 
       - name: "设置 Docker Buildx"
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: "构建 Docker 镜像"
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: false
@@ -211,30 +211,18 @@ jobs:
           gh release delete "$TAG_NAME" -y || true
           git push origin ":refs/tags/$TAG_NAME" || true
 
-      - name: "创建 GitHub Release"
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_NAME: ${{ github.event.inputs.release_name }}
+      - name: "创建 GitHub Release 并上传产物"
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.inputs.release_name }}-latest
-          release_name: ${{ github.event.inputs.release_name }} ISO
-          draft: false
-          prerelease: false
+          name: ${{ github.event.inputs.release_name }} ISO
           body: |
             发布名称: ${{ github.event.inputs.release_name }}
             架构: ${{ github.event.inputs.arch }}
             压缩格式: ${{ github.event.inputs.compress_format }}
             Secure Boot: ${{ github.event.inputs.secure_boot == 'true' && '启用' || '未启用' }}
             安装器: ${{ github.event.inputs.use_tui == 'true' && 'TUI' || 'Shell脚本' }}
-
-      - name: "上传 ISO 产物"
-        uses: actions/upload-release-asset@v1
+          files: output/${{ steps.compress_file.outputs.file }}
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: output/${{ steps.compress_file.outputs.file }}
-          asset_name: ${{ steps.compress_file.outputs.file }}
-          asset_content_type: ${{ steps.compress_file.outputs.content_type }}
