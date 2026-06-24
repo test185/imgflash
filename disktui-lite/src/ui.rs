@@ -1,6 +1,6 @@
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Direction, Flex, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table, Wrap},
@@ -9,7 +9,29 @@ use ratatui::{
 use crate::app::{App, ConfirmButton, Screen, SuccessAction};
 use crate::utils::format_bytes;
 
+/// Center a popup of given width/height within the terminal area.
+fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Fill(1), Constraint::Length(height), Constraint::Fill(1)])
+        .split(r);
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Fill(1), Constraint::Length(width), Constraint::Fill(1)])
+        .split(popup_layout[1])[1]
+}
+
 pub fn render(app: &mut App, frame: &mut Frame) {
+    let area = frame.area();
+    if area.width < 50 || area.height < 15 {
+        let msg = Paragraph::new("Terminal too small!\n\nPlease enlarge to at least 50x15.")
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+            .wrap(Wrap { trim: true });
+        frame.render_widget(msg, area);
+        return;
+    }
+
     match app.screen {
         Screen::DiskList => render_main(app, frame),
         Screen::Confirmation => {
@@ -23,6 +45,10 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         Screen::WriteError => {
             render_main(app, frame);
             render_write_error_dialog(app, frame);
+        }
+        Screen::ResizePrompt => {
+            render_main(app, frame);
+            render_resize_prompt_dialog(app, frame);
         }
         Screen::Success => render_success_screen(app, frame),
     }
@@ -185,6 +211,14 @@ fn render_context_help(app: &App, frame: &mut Frame, area: Rect) {
             Span::from("Enter/Esc ").bold().yellow(),
             Span::from("Return to disk list"),
         ],
+        Screen::ResizePrompt => vec![
+            Span::from("←/→ ").bold().yellow(),
+            Span::from("Choose | "),
+            Span::from("Tab ").bold().yellow(),
+            Span::from("Toggle | "),
+            Span::from("Enter ").bold().yellow(),
+            Span::from("Confirm"),
+        ],
         Screen::Success => {
             if app.reboot_counting {
                 vec![
@@ -218,15 +252,7 @@ fn render_confirmation_dialog(app: &App, frame: &mut Frame) {
     };
     let img_bytes = app.image_file_size().unwrap_or(0);
 
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Fill(1), Constraint::Length(12), Constraint::Fill(1)])
-        .split(frame.area());
-
-    let area = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Fill(1), Constraint::Length(60), Constraint::Fill(1)])
-        .split(popup_layout[1])[1];
+    let area = centered_rect(60, 12, frame.area());
 
     let border_block = Block::default()
         .title(" !! DANGEROUS OPERATION !! ")
@@ -290,15 +316,7 @@ fn render_progress_dialog(app: &App, frame: &mut Frame) {
         None => return,
     };
 
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Fill(1), Constraint::Length(12), Constraint::Fill(1)])
-        .split(frame.area());
-
-    let area = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Fill(1), Constraint::Length(64), Constraint::Fill(1)])
-        .split(popup_layout[1])[1];
+    let area = centered_rect(64, 12, frame.area());
 
     let spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
     let spinner = spinner_chars[progress.spinner_index];
@@ -359,15 +377,7 @@ fn render_progress_dialog(app: &App, frame: &mut Frame) {
 // ═══════════════════════════════════════════════════════════════════════
 
 fn render_write_error_dialog(app: &App, frame: &mut Frame) {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Fill(1), Constraint::Length(10), Constraint::Fill(1)])
-        .split(frame.area());
-
-    let area = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Fill(1), Constraint::Length(56), Constraint::Fill(1)])
-        .split(popup_layout[1])[1];
+    let area = centered_rect(56, 10, frame.area());
 
     let border_block = Block::default()
         .title(" Write Failed ")
@@ -410,20 +420,87 @@ fn render_write_error_dialog(app: &App, frame: &mut Frame) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// Resize prompt dialog
+// ═══════════════════════════════════════════════════════════════════════
+
+fn render_resize_prompt_dialog(app: &App, frame: &mut Frame) {
+    let disk_name = &app.written_disk_name;
+    let disk_sectors = app.written_disk_sectors;
+    let disk_bytes = disk_sectors.saturating_mul(512);
+
+    let img_size = app.image_file_size().unwrap_or(0);
+    let free_bytes = disk_bytes.saturating_sub(img_size);
+
+    let free_str = crate::utils::format_bytes(free_bytes);
+
+    let area = centered_rect(60, 14, frame.area());
+
+    let border_block = Block::default()
+        .title(" Free Space Detected ")
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_type(BorderType::default())
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let inner = border_block.inner(area);
+
+    let no_style = if app.confirm_button == ConfirmButton::No {
+        Style::default().bg(Color::DarkGray).fg(Color::White).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let yes_style = if app.confirm_button == ConfirmButton::Yes {
+        Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Cyan)
+    };
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Target:  /dev/", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(disk_name.clone(), Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled("Remaining:  ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(free_str, Style::default().fg(Color::Green)),
+        ]),
+        Line::from(""),
+        Line::from("Would you like to expand the last partition")
+            .style(Style::default().fg(Color::White))
+            .centered(),
+        Line::from("to use the remaining free space?")
+            .style(Style::default().fg(Color::White))
+            .centered(),
+        Line::from(""),
+        Line::from("This is safe for ext4/xfs filesystems.")
+            .style(Style::default().fg(Color::DarkGray))
+            .centered(),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("         "),
+            Span::styled("  No  ", no_style),
+            Span::raw("    "),
+            Span::styled("  Yes  ", yes_style),
+        ])
+        .centered(),
+        Line::from(""),
+        Line::from("← → or Tab to select  |  Enter to confirm")
+            .style(Style::default().fg(Color::DarkGray))
+            .centered(),
+    ];
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(border_block, area);
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Success / reboot screen
 // ═══════════════════════════════════════════════════════════════════════
 
 fn render_success_screen(app: &App, frame: &mut Frame) {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Fill(1), Constraint::Length(14), Constraint::Fill(1)])
-        .flex(Flex::SpaceBetween)
-        .split(frame.area());
-
-    let area = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Fill(1), Constraint::Length(56), Constraint::Fill(1)])
-        .split(popup_layout[1])[1];
+    let area = centered_rect(56, 14, frame.area());
 
     let border_block = Block::default()
         .title(" Installation Successful ")

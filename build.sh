@@ -37,8 +37,8 @@ case "${ARCH}" in
     *) die "不支持的架构 '${ARCH}'（支持 amd64 / arm64）" ;;
 esac
 
-SIGNED_PKGS="${KERNEL_PKG},${GRUB_PKG}"
-[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && SIGNED_PKGS="${KERNEL_PKG},${SHIM_PKG},${GRUB_PKG}"
+SIGNED_PKGS="${KERNEL_PKG},${GRUB_PKG},gdisk"
+[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && SIGNED_PKGS="${KERNEL_PKG},${SHIM_PKG},${GRUB_PKG},gdisk"
 
 BASE_MODULES="${MOD_FILESYSTEM} ${MOD_NLS} ${MOD_ATA} ${MOD_USB} ${MOD_CDROM} ${MOD_INPUT} ${MOD_EMMC} ${MOD_EMMC_CARDREADER} ${MOD_EMMC_USB:-}"
 OPT_NVME=$([[ "${INCLUDE_NVME}" != "0" ]] && echo "${MOD_NVME}" || echo "")
@@ -325,6 +325,12 @@ if [[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]]; then
     cp "${SHIM_SRC}" "${BUILD_DIR}/shim.efi"
     SHIM_SRC="${BUILD_DIR}/shim.efi"
 fi
+
+echo "  拷贝 sgdisk 及其依赖库 ..."
+install -m 755 -D "${ROOTFS_DIR}/usr/sbin/sgdisk" "${INITRAMFS_DIR}/sbin/sgdisk" &&
+ldd "${ROOTFS_DIR}/usr/sbin/sgdisk" 2>/dev/null |
+awk '/=> \// {print $3}' |
+xargs -r -I {} cp --parents -n {} "${INITRAMFS_DIR}/"
 
 rm -rf "${ROOTFS_DIR}"
 depmod -b "${INITRAMFS_DIR}" "${KVER}"
