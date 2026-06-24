@@ -135,31 +135,27 @@ impl DiskInfo {
     fn detect_sd_transport(name: &str) -> String {
         let base = Path::new("/sys/block").join(name);
 
+        // Try device/subsystem first (most direct way)
         if let Ok(link) = fs::read_link(base.join("device/subsystem")) {
-            let subsystem = link
-                .file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_default();
-            match subsystem.as_str() {
-                "usb" => return "USB".to_string(),
-                "scsi" => {}
-                _ => return subsystem,
+            if let Some(subsystem) = link.file_name() {
+                let s = subsystem.to_string_lossy().to_string();
+                if s == "usb" { return "USB".to_string(); }
+                if s == "virtio" { return "VirtIO".to_string(); }
+                if s != "scsi" { return s; } // e.g. "ata"
             }
         }
 
+        // Fallback: read device symlink path for transport hints
         if let Ok(link) = fs::read_link(base.join("device")) {
-            let path = link.to_string_lossy().to_string();
-            if path.contains("/usb") {
-                return "USB".to_string();
-            }
+            let path = link.to_string_lossy();
+            if path.contains("/usb")  { return "USB".to_string(); }
+            if path.contains("/virtio") { return "VirtIO".to_string(); }
+            if path.contains("/ata")  { return "SATA".to_string(); }
         }
 
-        if base.join("device/ata_device").is_dir() {
-            return "SATA".to_string();
-        }
-        if base.join("device/sas_device").is_dir() {
-            return "SAS".to_string();
-        }
+        // Last resort: sysfs markers
+        if base.join("device/ata_device").is_dir() { return "SATA".to_string(); }
+        if base.join("device/sas_device").is_dir() { return "SAS".to_string(); }
 
         "SCSI".to_string()
     }
