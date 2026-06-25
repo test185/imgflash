@@ -89,7 +89,6 @@ pub fn render(app: &mut App, frame: &mut Frame) {
             render_write_error_dialog(app, frame);
         }
         Screen::Success => render_success_screen(app, frame),
-        _ => render_main(app, frame),
     }
 
     if app.show_help {
@@ -267,7 +266,6 @@ fn render_context_help(app: &App, frame: &mut Frame, area: Rect) {
                 ]
             }
         }
-        _ => vec![],
     };
     frame.render_widget(Line::from(spans).centered(), area);
 }
