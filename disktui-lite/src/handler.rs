@@ -277,7 +277,7 @@ fn has_free_space(disk_name: &str, disk_sectors: u64) -> bool {
     if disk_name.is_empty() || disk_sectors == 0 {
         return false;
     }
-    let sg_output = match std::process::Command::new("sgdisk")
+    let sg_output = match std::process::Command::new("/sbin/sgdisk")
         .args(["-p", &format!("/dev/{}", disk_name)])
         .output()
     {
@@ -334,7 +334,7 @@ fn do_resize(app: &mut App) {
     let dev = format!("/dev/{}", app.written_disk_name);
 
     // Get last partition number
-    let sg_out = match std::process::Command::new("sgdisk")
+    let sg_out = match std::process::Command::new("/sbin/sgdisk")
         .args(["-p", &dev])
         .output()
     {
@@ -356,7 +356,7 @@ fn do_resize(app: &mut App) {
     };
 
     // Fix GPT backup header
-    if let Err(e) = std::process::Command::new("sgdisk")
+    if let Err(e) = std::process::Command::new("/sbin/sgdisk")
         .args(["-g", &dev])
         .output()
     {
@@ -365,7 +365,7 @@ fn do_resize(app: &mut App) {
     }
 
     // Expand partition
-    if let Err(e) = std::process::Command::new("sgdisk")
+    if let Err(e) = std::process::Command::new("/sbin/sgdisk")
         .args(["-d", &part.to_string(), "-N", &part.to_string(), &dev])
         .output()
     {
