@@ -259,48 +259,12 @@ pub fn poll_dd_progress(app: &mut App) {
 
     match process_status {
         Some(true) => {
-            if has_free_space(&app.written_disk_name, app.written_disk_sectors) {
-                app.goto_resize_prompt();
-            } else {
-                app.goto_success();
-            }
+            app.goto_resize_prompt();
         }
         Some(false) => {
             app.goto_write_error();
         }
         None => {}
-    }
-}
-
-/// Check if the disk has free space after the last partition.
-fn has_free_space(disk_name: &str, disk_sectors: u64) -> bool {
-    if disk_name.is_empty() || disk_sectors == 0 {
-        return false;
-    }
-    let sg_output = match std::process::Command::new("/sbin/sgdisk")
-        .args(["-p", &format!("/dev/{}", disk_name)])
-        .output()
-    {
-        Ok(o) => o,
-        Err(_) => return false,
-    };
-    let stdout = String::from_utf8_lossy(&sg_output.stdout);
-    let last_sector = stdout.lines()
-        .filter_map(|line| {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 3 && parts[0].parse::<u64>().is_ok() {
-                parts[2].parse::<u64>().ok()
-            } else {
-                None
-            }
-        })
-        .last();
-    match last_sector {
-        Some(end) => {
-            const MIN_FREE_SECTORS: u64 = 2_000_000; // ~1 GiB
-            end + MIN_FREE_SECTORS < disk_sectors
-        }
-        None => false,
     }
 }
 
