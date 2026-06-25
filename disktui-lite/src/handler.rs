@@ -2,6 +2,23 @@ use anyhow::Context;
 
 use crate::app::{App, ConfirmButton, Screen, SuccessAction, WriteProgress};
 
+fn reread_partition_table(dev: &str) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        let f = std::fs::OpenOptions::new().write(true).open(dev)?;
+        let rc = unsafe { libc::ioctl(
+            std::os::unix::io::AsRawFd::as_raw_fd(&f),
+            0x125F, // BLKRRPART
+        )};
+        if rc != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = dev;
+    Ok(())
+}
+
 pub fn handle_key_events(key: crossterm::event::KeyEvent, app: &mut App) -> anyhow::Result<()> {
     use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -324,9 +341,7 @@ fn do_resize(app: &mut App) {
 
     // Force kernel to re-read the partition table so /sys/block/ reflects
     // the just-written partition layout.
-    let _ = std::process::Command::new("partprobe")
-        .arg(&dev)
-        .output();
+    let _ = reread_partition_table(&dev);
     std::thread::sleep(std::time::Duration::from_millis(200));
 
     let part = find_last_data_partition(disk_name);
@@ -357,9 +372,7 @@ fn do_resize(app: &mut App) {
         return;
     }
 
-    let _ = std::process::Command::new("partprobe")
-        .arg(&dev)
-        .output();
+    let _ = reread_partition_table(&dev);
 
     let part_dev = match wait_for_partition_device(&dev, part) {
         Some(path) => path,
