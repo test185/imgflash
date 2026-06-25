@@ -5,7 +5,7 @@ use crate::app::{App, ConfirmButton, Screen, SuccessAction, WriteProgress};
 pub fn handle_key_events(key: crossterm::event::KeyEvent, app: &mut App) -> anyhow::Result<()> {
     use crossterm::event::{KeyCode, KeyModifiers};
 
-    // Global hotkeys (any screen)
+    // Global hotkeys
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
         app.quit();
         return Ok(());
@@ -275,19 +275,20 @@ pub fn poll_dd_progress(app: &mut App) {
 // ── Find the last data partition on disk ───────────────────────────────────
 
 fn find_last_data_partition(disk: &str) -> Option<u32> {
-    let sys_dir = std::path::Path::new("/sys/block").join(disk);
+    let dev = format!("/dev/{}", disk);
+    let sg_out = std::process::Command::new("/sbin/sgdisk")
+        .args(["-p", &dev])
+        .output()
+        .ok()
+        .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).to_string()) } else { None })?;
 
-    std::fs::read_dir(&sys_dir).ok()?
-        .filter_map(|e| e.ok())
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
-            let suffix = name.strip_prefix(disk)?;
-            let part_num = suffix.trim_start_matches('p').parse::<u32>().ok()?;
-
-            let start = std::fs::read_to_string(e.path().join("start")).ok()?;
-            let size = std::fs::read_to_string(e.path().join("size")).ok()?;
-
-            Some((part_num, start.trim().parse::<u64>().ok()? + size.trim().parse::<u64>().ok()?))
+    sg_out.lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let part_num = fields.next()?.parse::<u32>().ok()?;
+            fields.next()?;
+            let end = fields.next()?.parse::<u64>().ok()?;
+            Some((part_num, end))
         })
         .max_by_key(|(_, end)| *end)
         .map(|(p, _)| p)
@@ -316,7 +317,6 @@ fn do_resize(app: &mut App) {
     let dev = format!("/dev/{}", app.written_disk_name);
     let disk_name = &app.written_disk_name;
 
-    // Flush dd data + fix GPT backup header before touching partition table
     let _ = std::process::Command::new("sync").output();
     let _ = std::process::Command::new("/sbin/sgdisk")
         .args(["-e", &dev])
@@ -357,12 +357,10 @@ fn do_resize(app: &mut App) {
         return;
     }
 
-    // Notify kernel of new partition boundary
     let _ = std::process::Command::new("partprobe")
         .arg(&dev)
         .output();
 
-    // Poll up to 5s for the partition device node
     let part_dev = match wait_for_partition_device(&dev, part) {
         Some(path) => path,
         None => {
@@ -371,7 +369,6 @@ fn do_resize(app: &mut App) {
         }
     };
 
-    // Detect and resize filesystem
     resize_filesystem(&part_dev);
 
     let _ = std::process::Command::new("sync").output();
