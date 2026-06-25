@@ -44,9 +44,9 @@ fn render_dialog(frame: &mut Frame, area: Rect, block: Block<'_>, lines: Vec<Lin
 /// Render a Yes/No button row centered with consistent spacing.
 fn yes_no_row(no_style: Style, yes_style: Style) -> Line<'static> {
     Line::from(vec![
-        Span::styled("  No  ", no_style),
+        Span::styled("  No ", no_style),
         Span::raw("    "),
-        Span::styled(" Yes  ", yes_style),
+        Span::styled(" Yes ", yes_style),
     ])
     .centered()
 }
