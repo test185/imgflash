@@ -328,8 +328,8 @@ fi
 
 echo "  拷贝 sgdisk 及其依赖库 ..."
 SG="${ROOTFS_DIR}/usr/sbin/sgdisk"
-install -m 755 -D "$SG" "${INITRAMFS_DIR}/sbin/sgdisk" &&
-ldd "$SG" 2>/dev/null | awk '/=> \// {print $3}' | xargs -r -I {} cp --parents -n {} "${INITRAMFS_DIR}/" &&
+install -m 755 -D "$SG" "${INITRAMFS_DIR}/sbin/sgdisk"
+ldd "$SG" 2>/dev/null | awk '/=> \// {print $3}' | xargs -r -I {} cp --parents -n {} "${INITRAMFS_DIR}/"
 cp --parents -n "${ROOTFS_DIR}$(readelf -l "$SG" 2>/dev/null | awk -F'[][]' '/INTERP/{getline; print $2}')" "${INITRAMFS_DIR}/" 2>/dev/null
 
 echo "  拷贝 setfont 及控制台字体 ..."
