@@ -9,6 +9,9 @@ use ratatui::{
 use crate::app::{App, ConfirmButton, Screen, SuccessAction};
 use crate::utils::format_bytes;
 
+// ── Shared UI strings ────────────────────────────────────────────────
+const CONFIRM_HINT: &str = "← → or Tab to select  |  Enter to confirm";
+
 /// Center a popup of given width/height within the terminal area.
 fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
@@ -19,6 +22,49 @@ fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Fill(1), Constraint::Length(width), Constraint::Fill(1)])
         .split(popup_layout[1])[1]
+}
+
+// ── Shared dialog helpers ─────────────────────────────────────────────
+
+/// Create a centered dialog block with the given title and border color.
+fn dialog_block<'a>(title: &'a str, border_color: Color) -> Block<'a> {
+    Block::default()
+        .title(title)
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_type(BorderType::default())
+        .border_style(Style::default().fg(border_color))
+}
+
+/// Render a standard dialog: clear area, draw border block, draw paragraph content.
+fn render_dialog(frame: &mut Frame, area: Rect, block: Block<'_>, lines: Vec<Line<'_>>) {
+    let inner = block.inner(area);
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Render a Yes/No button row centered with consistent spacing.
+fn yes_no_row(no_style: Style, yes_style: Style) -> Line<'static> {
+    Line::from(vec![
+        Span::styled("  No  ", no_style),
+        Span::raw("    "),
+        Span::styled(" Yes  ", yes_style),
+    ])
+    .centered()
+}
+
+/// Build (no_style, yes_style) for dialogs with Yes/No buttons.
+fn confirm_button_styles(
+    app: &App,
+    yes_active: Style,
+    yes_inactive: Style,
+    no_active: Style,
+    no_inactive: Style,
+) -> (Style, Style) {
+    let no_style = if app.confirm_button == ConfirmButton::No { no_active } else { no_inactive };
+    let yes_style = if app.confirm_button == ConfirmButton::Yes { yes_active } else { yes_inactive };
+    (no_style, yes_style)
 }
 
 pub fn render(app: &mut App, frame: &mut Frame) {
@@ -253,28 +299,17 @@ fn render_confirmation_dialog(app: &App, frame: &mut Frame) {
     let img_bytes = app.image_file_size().unwrap_or(0);
 
     let area = centered_rect(60, 12, frame.area());
+    let block = dialog_block(" !! DANGEROUS OPERATION !! ", Color::Yellow);
 
-    let border_block = Block::default()
-        .title(" !! DANGEROUS OPERATION !! ")
-        .title_alignment(Alignment::Center)
-        .borders(Borders::ALL)
-        .border_type(BorderType::default())
-        .border_style(Style::default().fg(Color::Yellow));
+    let (no_style, yes_style) = confirm_button_styles(
+        app,
+        /* yes active */ Style::default().bg(Color::Red).fg(Color::White).add_modifier(Modifier::BOLD),
+        /* yes inactive */ Style::default().fg(Color::Red),
+        /* no active */ Style::default().bg(Color::DarkGray).fg(Color::White).add_modifier(Modifier::BOLD),
+        /* no inactive */ Style::default().fg(Color::DarkGray),
+    );
 
-    let inner = border_block.inner(area);
-
-    let no_style = if app.confirm_button == ConfirmButton::No {
-        Style::default().bg(Color::DarkGray).fg(Color::White).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-    let yes_style = if app.confirm_button == ConfirmButton::Yes {
-        Style::default().bg(Color::Red).fg(Color::White).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::Red)
-    };
-
-    let lines = vec![
+    render_dialog(frame, area, block, vec![
         Line::from(""),
         Line::from("This will ERASE ALL DATA on the target disk!")
             .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
@@ -288,22 +323,13 @@ fn render_confirmation_dialog(app: &App, frame: &mut Frame) {
             Span::styled(format_bytes(img_bytes), Style::default().fg(Color::White)),
         ]),
         Line::from(""),
-        Line::from(vec![
-            Span::raw("  "),
-            Span::styled(" No ", no_style),
-            Span::raw("    "),
-            Span::styled(" Yes ", yes_style),
-        ])
-        .centered(),
+        yes_no_row(no_style, yes_style),
         Line::from(""),
-        Line::from("← → or Tab to select  |  Enter to confirm")
+        Line::from(CONFIRM_HINT)
             .style(Style::default().fg(Color::DarkGray))
             .centered(),
-    ];
-
-    frame.render_widget(Clear, area);
-    frame.render_widget(border_block, area);
-    frame.render_widget(Paragraph::new(lines), inner);
+        Line::from(""),
+    ]);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -378,21 +404,13 @@ fn render_progress_dialog(app: &App, frame: &mut Frame) {
 
 fn render_write_error_dialog(app: &App, frame: &mut Frame) {
     let area = centered_rect(56, 10, frame.area());
-
-    let border_block = Block::default()
-        .title(" Write Failed ")
-        .title_alignment(Alignment::Center)
-        .borders(Borders::ALL)
-        .border_type(BorderType::default())
-        .border_style(Style::default().fg(Color::Red));
-
-    let inner = border_block.inner(area);
+    let block = dialog_block(" Write Failed ", Color::Red);
 
     let disk_info = app.progress.as_ref()
         .map(|p| format!("/dev/{} ({})", p.disk_name, p.disk_model))
         .unwrap_or_default();
 
-    let lines = vec![
+    render_dialog(frame, area, block, vec![
         Line::from(""),
         Line::from("Installation failed!")
             .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
@@ -412,11 +430,7 @@ fn render_write_error_dialog(app: &App, frame: &mut Frame) {
         Line::from("Press Enter or Esc to return to disk list")
             .style(Style::default().fg(Color::Yellow))
             .centered(),
-    ];
-
-    frame.render_widget(Clear, area);
-    frame.render_widget(border_block, area);
-    frame.render_widget(Paragraph::new(lines), inner);
+    ]);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -434,28 +448,17 @@ fn render_resize_prompt_dialog(app: &App, frame: &mut Frame) {
     let free_str = crate::utils::format_bytes(free_bytes);
 
     let area = centered_rect(60, 14, frame.area());
+    let block = dialog_block(" Free Space Detected ", Color::Cyan);
 
-    let border_block = Block::default()
-        .title(" Free Space Detected ")
-        .title_alignment(Alignment::Center)
-        .borders(Borders::ALL)
-        .border_type(BorderType::default())
-        .border_style(Style::default().fg(Color::Cyan));
+    let (no_style, yes_style) = confirm_button_styles(
+        app,
+        /* yes active */ Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD),
+        /* yes inactive */ Style::default().fg(Color::Cyan),
+        /* no active */ Style::default().bg(Color::DarkGray).fg(Color::White).add_modifier(Modifier::BOLD),
+        /* no inactive */ Style::default().fg(Color::DarkGray),
+    );
 
-    let inner = border_block.inner(area);
-
-    let no_style = if app.confirm_button == ConfirmButton::No {
-        Style::default().bg(Color::DarkGray).fg(Color::White).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-    let yes_style = if app.confirm_button == ConfirmButton::Yes {
-        Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::Cyan)
-    };
-
-    let lines = vec![
+    render_dialog(frame, area, block, vec![
         Line::from(""),
         Line::from(vec![
             Span::styled("Target:  /dev/", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
@@ -477,22 +480,12 @@ fn render_resize_prompt_dialog(app: &App, frame: &mut Frame) {
             .style(Style::default().fg(Color::DarkGray))
             .centered(),
         Line::from(""),
-        Line::from(vec![
-            Span::raw("         "),
-            Span::styled("  No  ", no_style),
-            Span::raw("    "),
-            Span::styled("  Yes  ", yes_style),
-        ])
-        .centered(),
+        yes_no_row(no_style, yes_style),
         Line::from(""),
-        Line::from("← → or Tab to select  |  Enter to confirm")
+        Line::from(CONFIRM_HINT)
             .style(Style::default().fg(Color::DarkGray))
             .centered(),
-    ];
-
-    frame.render_widget(Clear, area);
-    frame.render_widget(border_block, area);
-    frame.render_widget(Paragraph::new(lines), inner);
+    ]);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -501,18 +494,7 @@ fn render_resize_prompt_dialog(app: &App, frame: &mut Frame) {
 
 fn render_success_screen(app: &App, frame: &mut Frame) {
     let area = centered_rect(56, 14, frame.area());
-
-    let border_block = Block::default()
-        .title(" Installation Successful ")
-        .title_alignment(Alignment::Center)
-        .borders(Borders::ALL)
-        .border_type(BorderType::default())
-        .border_style(Style::default().fg(app.theme.success));
-
-    let inner = border_block.inner(area);
-
-    frame.render_widget(Clear, area);
-    frame.render_widget(border_block, area);
+    let block = dialog_block(" Installation Successful ", app.theme.success);
 
     let reboot_btn = if app.success_action == SuccessAction::Reboot && !app.reboot_counting {
         Span::styled(" Reboot ", Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD))
@@ -528,43 +510,32 @@ fn render_success_screen(app: &App, frame: &mut Frame) {
         Span::styled(" Back ", Style::default().fg(Color::DarkGray))
     };
 
-    let lines = if app.reboot_counting {
-        vec![
-            Line::from(""),
-            Line::from("Image has been written successfully!")
-                .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
-                .centered(),
-            Line::from(""),
-            Line::from("NOTICE BEFORE REBOOTING:")
-                .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
-                .centered(),
-            Line::from(""),
-            Line::from("  * Please REMOVE the USB drive or Disc.")
-                .style(Style::default().fg(Color::White)),
-            Line::from("  * Ensure media is removed to avoid boot loops.")
-                .style(Style::default().fg(Color::White)),
-            Line::from(""),
+    let mut lines: Vec<Line<'_>> = vec![
+        Line::from(""),
+        Line::from("Image has been written successfully!")
+            .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+            .centered(),
+        Line::from(""),
+        Line::from("NOTICE BEFORE REBOOTING:")
+            .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            .centered(),
+        Line::from(""),
+        Line::from("  * Please REMOVE the USB drive or Disc.")
+            .style(Style::default().fg(Color::White)),
+        Line::from("  * Ensure media is removed to avoid boot loops.")
+            .style(Style::default().fg(Color::White)),
+        Line::from(""),
+    ];
+
+    if app.reboot_counting {
+        lines.push(
             Line::from(format!("  Rebooting in {} seconds... (Enter to skip)", app.reboot_countdown))
                 .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
                 .centered(),
-            Line::from(""),
-        ]
+        );
+        lines.push(Line::from(""));
     } else {
-        vec![
-            Line::from(""),
-            Line::from("Image has been written successfully!")
-                .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
-                .centered(),
-            Line::from(""),
-            Line::from("NOTICE BEFORE REBOOTING:")
-                .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
-                .centered(),
-            Line::from(""),
-            Line::from("  * Please REMOVE the USB drive or Disc.")
-                .style(Style::default().fg(Color::White)),
-            Line::from("  * Ensure media is removed to avoid boot loops.")
-                .style(Style::default().fg(Color::White)),
-            Line::from(""),
+        lines.push(
             Line::from(vec![
                 Span::raw("  "),
                 reboot_btn,
@@ -572,15 +543,17 @@ fn render_success_screen(app: &App, frame: &mut Frame) {
                 back_btn,
             ])
             .centered(),
-            Line::from(""),
-            Line::from("  ← → or Tab to choose  |  Enter to confirm")
+        );
+        lines.push(Line::from(""));
+        lines.push(
+            Line::from(CONFIRM_HINT)
                 .style(Style::default().fg(Color::DarkGray))
                 .centered(),
-            Line::from(""),
-        ]
-    };
+        );
+        lines.push(Line::from(""));
+    }
 
-    frame.render_widget(Paragraph::new(lines), inner);
+    render_dialog(frame, area, block, lines);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
