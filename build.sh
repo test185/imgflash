@@ -113,6 +113,14 @@ download_image() {
 
     local extracted_name=""
 
+    case "${url}" in
+        *.tar.gz|*.tar.xz|*.tar.bz2|*.tar.zst|*.tgz)
+            tar -xf "${BUILD_DIR}/downloaded_file" -C "${BUILD_DIR}/"
+            extracted_name=$(ls "${BUILD_DIR}"/*.img 2>/dev/null | head -1 | xargs basename)
+            ;;
+    esac
+
+    if [[ -z "${extracted_name}" ]]; then
     case "${file_type}" in
         application/gzip)
             extracted_name=$(basename "$url" | sed 's/\.gz$//')
@@ -139,6 +147,7 @@ download_image() {
             mv "${BUILD_DIR}/downloaded_file" "${BUILD_DIR}/${extracted_name}"
             ;;
     esac
+    fi
 
     rm -f "${BUILD_DIR}/downloaded_file"
     [[ -n "${extracted_name}" && -f "${BUILD_DIR}/${extracted_name}" ]] || die "未找到解压后的镜像文件！"
@@ -347,6 +356,8 @@ echo "  Phase 3 完成。"
 echo ""; echo "[Phase 4] 打包镜像容器 ..."
 
 mv "${BUILD_DIR}/temp.img" "${BUILD_DIR}/image.img"
+fallocate --dig-holes "${BUILD_DIR}/image.img" 2>/dev/null || true
+
 echo "  原始镜像大小：$(format_size "${BUILD_DIR}/image.img")"
 
 echo "  创建 squashfs（zstd）..."
