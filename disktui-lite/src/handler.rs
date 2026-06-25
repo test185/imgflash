@@ -2,32 +2,8 @@ use anyhow::Context;
 
 use crate::app::{App, ConfirmButton, Screen, SuccessAction, WriteProgress};
 
-fn reread_partition_table(dev: &str) -> std::io::Result<()> {
-    #[cfg(target_os = "linux")]
-    {
-        let f = std::fs::OpenOptions::new().write(true).open(dev)?;
-        let rc = unsafe { libc::ioctl(
-            std::os::unix::io::AsRawFd::as_raw_fd(&f),
-            0x125F, // BLKRRPART
-        )};
-        if rc != 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-    }
-    #[cfg(not(target_os = "linux"))]
-    let _ = dev;
-    Ok(())
-}
-
 pub fn handle_key_events(key: crossterm::event::KeyEvent, app: &mut App) -> anyhow::Result<()> {
-    use crossterm::event::{KeyCode, KeyModifiers};
-
-    // Global hotkeys
-    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-        app.quit();
-        return Ok(());
-    }
-
+    // Help overlay: any key dismisses
     if app.show_help {
         app.show_help = false;
         return Ok(());
@@ -38,7 +14,6 @@ pub fn handle_key_events(key: crossterm::event::KeyEvent, app: &mut App) -> anyh
         Screen::Confirmation => handle_confirmation(key, app),
         Screen::Writing => handle_writing(key, app),
         Screen::WriteError => handle_write_error(key, app),
-        Screen::ResizePrompt => handle_resize_prompt(key, app),
         Screen::Success => handle_success(key, app),
     }
 }
@@ -228,6 +203,7 @@ fn start_write(app: &mut App) -> anyhow::Result<()> {
     let img_bytes = app.image_file_size()
         .context("Failed to get image file size")?;
 
+    // Spawn self as dd subprocess
     let child = std::process::Command::new("/proc/self/exe")
         .arg("--dd")
         .arg(format!("if={}", App::IMAGE_FILE))
@@ -239,13 +215,7 @@ fn start_write(app: &mut App) -> anyhow::Result<()> {
         .context("Failed to spawn dd process")?;
 
     let progress = WriteProgress::new(&disk, img_bytes, child);
-
-    let sectors: u64 = std::fs::read_to_string(format!("/sys/block/{}/size", disk.name))
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0);
-
-    app.goto_writing(progress, disk.name, sectors);
+    app.goto_writing(progress);
 
     Ok(())
 }
@@ -280,159 +250,11 @@ pub fn poll_dd_progress(app: &mut App) {
 
     match process_status {
         Some(true) => {
-            app.goto_resize_prompt();
+            app.goto_success();
         }
         Some(false) => {
             app.goto_write_error();
         }
         None => {}
-    }
-}
-
-// ── Find the last data partition on disk ───────────────────────────────────
-
-fn find_last_data_partition(disk: &str) -> Option<u32> {
-    let dev = format!("/dev/{}", disk);
-    let sg_out = std::process::Command::new("/sbin/sgdisk")
-        .args(["-p", &dev])
-        .output()
-        .ok()
-        .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).to_string()) } else { None })?;
-
-    sg_out.lines()
-        .filter_map(|line| {
-            let mut fields = line.split_whitespace();
-            let part_num = fields.next()?.parse::<u32>().ok()?;
-            fields.next()?;
-            let end = fields.next()?.parse::<u64>().ok()?;
-            Some((part_num, end))
-        })
-        .max_by_key(|(_, end)| *end)
-        .map(|(p, _)| p)
-}
-
-// ── Resize prompt ──────────────────────────────────────────────────────
-
-fn handle_resize_prompt(key: crossterm::event::KeyEvent, app: &mut App) -> anyhow::Result<()> {
-    use crossterm::event::KeyCode;
-
-    handle_dialog_toggle(&key, &mut app.confirm_button);
-
-    match key.code {
-        KeyCode::Enter => {
-            if app.confirm_button == ConfirmButton::Yes {
-                do_resize(app);
-            }
-            app.goto_success();
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-fn do_resize(app: &mut App) {
-    let dev = format!("/dev/{}", app.written_disk_name);
-    let disk_name = &app.written_disk_name;
-
-    let _ = std::process::Command::new("sync").output();
-    let _ = std::process::Command::new("/sbin/sgdisk")
-        .args(["-e", &dev])
-        .output();
-
-    // Force kernel to re-read the partition table so /sys/block/ reflects
-    // the just-written partition layout.
-    let _ = reread_partition_table(&dev);
-    std::thread::sleep(std::time::Duration::from_millis(200));
-
-    let part = find_last_data_partition(disk_name);
-
-    let part = match part {
-        Some(p) => p,
-        None => {
-            let diag = std::process::Command::new("/sbin/sgdisk")
-                .args(["-p", &dev])
-                .output()
-                .ok()
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                .unwrap_or_else(|| "sgdisk unavailable".to_string());
-            app.notify(
-                format!("No partition found for {}: {}", disk_name, diag),
-                crate::notification::NotificationLevel::Error,
-            );
-            return;
-        }
-    };
-
-    // Expand last partition in-place (preserves native PARTUUID)
-    if let Err(e) = std::process::Command::new("parted")
-        .args(["-s", "-m", &dev, "resizepart", &part.to_string(), "100%"])
-        .output()
-    {
-        app.notify(format!("Partition expansion failed: {}", e), crate::notification::NotificationLevel::Error);
-        return;
-    }
-
-    let _ = reread_partition_table(&dev);
-
-    let part_dev = match wait_for_partition_device(&dev, part) {
-        Some(path) => path,
-        None => {
-            app.notify("Partition device node did not appear in time.", crate::notification::NotificationLevel::Error);
-            return;
-        }
-    };
-
-    resize_filesystem(&part_dev);
-
-    let _ = std::process::Command::new("sync").output();
-
-    app.notify("Partition expanded!", crate::notification::NotificationLevel::Info);
-}
-
-// ── Helper: wait for partition device node ────────────────────────────────
-
-fn wait_for_partition_device(dev: &str, part: u32) -> Option<String> {
-    let candidates = [format!("{}p{}", dev, part), format!("{}{}", dev, part)];
-
-    for _ in 0..50 {
-        for candidate in &candidates {
-            if std::path::Path::new(candidate).exists() {
-                return Some(candidate.clone());
-            }
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-    None
-}
-
-// ── Resize filesystem ────────────────────────────────────────────────────
-
-fn resize_filesystem(part_dev: &str) {
-    let blkid = match std::process::Command::new("blkid")
-        .args(["-o", "value", "-s", "TYPE", part_dev])
-        .output()
-    {
-        Ok(o) => o,
-        Err(_) => return,
-    };
-    let fstype = String::from_utf8_lossy(&blkid.stdout).trim().to_string();
-    match fstype.as_str() {
-        "ext4" => {
-            let _ = std::process::Command::new("resize2fs").arg(part_dev).output();
-        }
-        "xfs"  => {
-            let tmp_mnt = "/tmp/mnt_resize";
-            let _ = std::fs::create_dir_all(tmp_mnt);
-            if std::process::Command::new("mount")
-                .args([part_dev, tmp_mnt])
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-            {
-                let _ = std::process::Command::new("xfs_growfs").arg(tmp_mnt).output();
-                let _ = std::process::Command::new("umount").arg(tmp_mnt).output();
-            }
-        }
-        _ => {}
     }
 }

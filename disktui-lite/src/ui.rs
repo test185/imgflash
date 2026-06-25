@@ -88,11 +88,8 @@ pub fn render(app: &mut App, frame: &mut Frame) {
             render_main(app, frame);
             render_write_error_dialog(app, frame);
         }
-        Screen::ResizePrompt => {
-            render_main(app, frame);
-            render_resize_prompt_dialog(app, frame);
-        }
         Screen::Success => render_success_screen(app, frame),
+        _ => render_main(app, frame),
     }
 
     if app.show_help {
@@ -252,14 +249,6 @@ fn render_context_help(app: &App, frame: &mut Frame, area: Rect) {
             Span::from("Enter/Esc ").bold().yellow(),
             Span::from("Return to disk list"),
         ],
-        Screen::ResizePrompt => vec![
-            Span::from("←/→ ").bold().yellow(),
-            Span::from("Choose | "),
-            Span::from("Tab ").bold().yellow(),
-            Span::from("Toggle | "),
-            Span::from("Enter ").bold().yellow(),
-            Span::from("Confirm"),
-        ],
         Screen::Success => {
             if app.reboot_counting {
                 vec![
@@ -278,6 +267,7 @@ fn render_context_help(app: &App, frame: &mut Frame, area: Rect) {
                 ]
             }
         }
+        _ => vec![],
     };
     frame.render_widget(Line::from(spans).centered(), area);
 }
@@ -425,57 +415,6 @@ fn render_write_error_dialog(app: &App, frame: &mut Frame) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Resize prompt dialog
-// ═══════════════════════════════════════════════════════════════════════
-
-fn render_resize_prompt_dialog(app: &App, frame: &mut Frame) {
-    let disk_name = &app.written_disk_name;
-    let disk_sectors = app.written_disk_sectors;
-    let disk_bytes = disk_sectors.saturating_mul(512);
-
-    let img_size = app.image_file_size().unwrap_or(0);
-    let free_bytes = disk_bytes.saturating_sub(img_size);
-
-    let free_str = crate::utils::format_bytes(free_bytes);
-
-    let area = centered_rect(60, 14, frame.area());
-    let block = dialog_block(" Free Space Detected ", Color::Cyan);
-
-    let (no_style, yes_style) = confirm_button_styles(
-        app,
-        /* yes active */ Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD),
-        /* yes inactive */ Style::default().fg(Color::Cyan),
-        /* no active */ Style::default().bg(Color::DarkGray).fg(Color::White).add_modifier(Modifier::BOLD),
-        /* no inactive */ Style::default().fg(Color::DarkGray),
-    );
-
-    render_dialog(frame, area, block, vec![
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("Target:  /dev/", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::styled(disk_name.clone(), Style::default().fg(Color::White)),
-        ]),
-        Line::from(vec![
-            Span::styled("Remaining:  ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::styled(free_str, Style::default().fg(Color::Green)),
-        ]),
-        Line::from(""),
-        Line::from("Would you like to expand the last partition")
-            .style(Style::default().fg(Color::White))
-            .centered(),
-        Line::from("to use the remaining free space?")
-            .style(Style::default().fg(Color::White))
-            .centered(),
-        Line::from(""),
-        Line::from("This is safe for ext4/xfs filesystems.")
-            .style(Style::default().fg(Color::DarkGray))
-            .centered(),
-        Line::from(""),
-        yes_no_row(no_style, yes_style),
-    ]);
-}
-
-// ═══════════════════════════════════════════════════════════════════════
 // Success / reboot screen
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -617,13 +556,13 @@ fn render_notification(notification: &crate::notification::Notification, index: 
         .split(popup_layout[1])[1];
 
     let block = Paragraph::new(text)
-        .alignment(Alignment::Center)
         .block(
             Block::default()
+                .title(ratatui::text::Span::styled(title, Style::default().fg(color)))
                 .borders(Borders::ALL)
-                .border_type(BorderType::default())
                 .border_style(Style::default().fg(color)),
-        );
+        )
+        .style(Style::default().fg(color));
 
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);

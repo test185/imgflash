@@ -18,7 +18,6 @@ pub enum Screen {
     Confirmation,
     Writing,
     WriteError,
-    ResizePrompt,
     Success,
 }
 
@@ -198,8 +197,6 @@ pub struct App {
     pub theme: Theme,
     pub tick_count: u64,
     pub exit_action: ExitAction,
-    pub written_disk_name: String,
-    pub written_disk_sectors: u64,
 }
 
 impl App {
@@ -229,8 +226,6 @@ impl App {
             theme: Theme::new(),
             tick_count: 0,
             exit_action: ExitAction::None,
-            written_disk_name: String::new(),
-            written_disk_sectors: 0,
         })
     }
 
@@ -292,7 +287,6 @@ impl App {
             self.reboot_last_tick = self.tick_count;
             self.reboot_countdown -= 1;
             if self.reboot_countdown == 0 {
-                let _ = std::process::Command::new("sync").status();
                 self.exit_action = ExitAction::Reboot;
                 self.running = false;
             }
@@ -319,8 +313,6 @@ impl App {
     pub fn goto_disk_list(&mut self) {
         self.screen = Screen::DiskList;
         self.progress = None;
-        self.written_disk_name.clear();
-        self.written_disk_sectors = 0;
     }
 
     pub fn goto_confirmation(&mut self) {
@@ -328,21 +320,13 @@ impl App {
         self.screen = Screen::Confirmation;
     }
 
-    pub fn goto_writing(&mut self, progress: WriteProgress, disk_name: String, disk_sectors: u64) {
+    pub fn goto_writing(&mut self, progress: WriteProgress) {
         self.progress = Some(progress);
-        self.written_disk_name = disk_name;
-        self.written_disk_sectors = disk_sectors;
         self.screen = Screen::Writing;
     }
 
     pub fn goto_write_error(&mut self) {
         self.screen = Screen::WriteError;
-    }
-
-    pub fn goto_resize_prompt(&mut self) {
-        self.confirm_button = ConfirmButton::default();
-        self.progress = None;
-        self.screen = Screen::ResizePrompt;
     }
 
     pub fn goto_success(&mut self) {

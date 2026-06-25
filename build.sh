@@ -37,8 +37,8 @@ case "${ARCH}" in
     *) die "不支持的架构 '${ARCH}'（支持 amd64 / arm64）" ;;
 esac
 
-SIGNED_PKGS="${KERNEL_PKG},${GRUB_PKG},gdisk,parted,e2fsprogs,xfsprogs"
-[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && SIGNED_PKGS="${KERNEL_PKG},${SHIM_PKG},${GRUB_PKG},gdisk,parted,e2fsprogs,xfsprogs"
+SIGNED_PKGS="${KERNEL_PKG},${GRUB_PKG}"
+[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && SIGNED_PKGS="${KERNEL_PKG},${SHIM_PKG},${GRUB_PKG}"
 
 BASE_MODULES="${MOD_FILESYSTEM} ${MOD_NLS} ${MOD_ATA} ${MOD_USB} ${MOD_CDROM} ${MOD_INPUT} ${MOD_EMMC} ${MOD_EMMC_CARDREADER} ${MOD_EMMC_USB:-}"
 OPT_NVME=$([[ "${INCLUDE_NVME}" != "0" ]] && echo "${MOD_NVME}" || echo "")
@@ -91,16 +91,6 @@ format_size() {
     local unit="MiB" divisor=$((1024*1024))
     [ "$bytes" -ge $((1024*1024*1024)) ] && { unit="GiB"; divisor=$((1024*1024*1024)); }
     awk "BEGIN { printf \"%.2f %s\", $bytes / $divisor, \"$unit\" }"
-}
-
-# Copy a binary and its runtime dependencies into initramfs.
-copy_tool() {
-    local src="$1" dest="$2"
-    [[ -f "$src" ]] || return 0
-    install -m 755 -D "$src" "${dest}"
-    ldd "$src" 2>/dev/null | grep -oE '/[^ ]+' | while read -r lib; do
-        (cd "${ROOTFS_DIR}" && cp --parents -n ".${lib}" "${INITRAMFS_DIR}/" 2>/dev/null || true)
-    done
 }
 
 download_image() {
@@ -335,16 +325,6 @@ if [[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]]; then
     cp "${SHIM_SRC}" "${BUILD_DIR}/shim.efi"
     SHIM_SRC="${BUILD_DIR}/shim.efi"
 fi
-
-echo "  拷贝工具 ..."
-for _t in \
-    "usr/sbin/sgdisk:sbin/sgdisk" \
-    "usr/sbin/parted:usr/sbin/parted" \
-    "usr/sbin/blkid:usr/sbin/blkid" \
-    "usr/sbin/resize2fs:usr/sbin/resize2fs" \
-    "usr/sbin/xfs_growfs:usr/sbin/xfs_growfs"; do
-    copy_tool "${ROOTFS_DIR}/${_t%:*}" "${INITRAMFS_DIR}/${_t#*:}"
-done
 
 rm -rf "${ROOTFS_DIR}"
 depmod -b "${INITRAMFS_DIR}" "${KVER}"
