@@ -272,6 +272,27 @@ pub fn poll_dd_progress(app: &mut App) {
     }
 }
 
+// ── Find the last data partition on disk ───────────────────────────────────
+
+fn find_last_data_partition(disk: &str) -> Option<u32> {
+    let sys_dir = std::path::Path::new("/sys/block").join(disk);
+
+    std::fs::read_dir(&sys_dir).ok()?
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            let suffix = name.strip_prefix(disk)?;
+            let part_num = suffix.trim_start_matches('p').parse::<u32>().ok()?;
+
+            let start = std::fs::read_to_string(e.path().join("start")).ok()?;
+            let size = std::fs::read_to_string(e.path().join("size")).ok()?;
+
+            Some((part_num, start.trim().parse::<u64>().ok()? + size.trim().parse::<u64>().ok()?))
+        })
+        .max_by_key(|(_, end)| *end)
+        .map(|(p, _)| p)
+}
+
 // ── Resize prompt ──────────────────────────────────────────────────────
 
 fn handle_resize_prompt(key: crossterm::event::KeyEvent, app: &mut App) -> anyhow::Result<()> {
@@ -295,34 +316,22 @@ fn do_resize(app: &mut App) {
     let dev = format!("/dev/{}", app.written_disk_name);
     let disk_name = &app.written_disk_name;
 
-    // 1. Flush dd data to disk before touching partition table
+    // Flush dd data + fix GPT backup header before touching partition table
     let _ = std::process::Command::new("sync").output();
-
-    // 2. Move GPT backup header to the end of the disk
     let _ = std::process::Command::new("/sbin/sgdisk")
         .args(["-e", &dev])
         .output();
 
-    // 3. Force kernel to re-read the partition table that dd just wrote.
-    //    Without this, /proc/partitions still reflects the old state.
+    // Force kernel to re-read the partition table so /sys/block/ reflects
+    // the just-written partition layout.
     let _ = std::process::Command::new("partprobe")
         .arg(&dev)
         .output();
     std::thread::sleep(std::time::Duration::from_millis(200));
 
-    // 4. Read partition number from /proc/partitions (now up-to-date)
-    let proc_partitions = std::fs::read_to_string("/proc/partitions").unwrap_or_default();
-    let part: u32 = match proc_partitions.lines()
-        .filter_map(|line| {
-            let fields: Vec<&str> = line.split_whitespace().collect();
-            if fields.len() != 4 { return None; }
-            let name = fields[3];
-            if !name.starts_with(disk_name) || name.len() == disk_name.len() { return None; }
-            let suffix = &name[disk_name.len()..]; // "p1" or "1"
-            suffix.trim_start_matches('p').parse::<u32>().ok()
-        })
-        .last()
-    {
+    let part = find_last_data_partition(disk_name);
+
+    let part = match part {
         Some(p) => p,
         None => {
             let diag = std::process::Command::new("/sbin/sgdisk")
@@ -339,7 +348,7 @@ fn do_resize(app: &mut App) {
         }
     };
 
-    // 5. Expand last partition (preserves native PARTUUID)
+    // Expand last partition in-place (preserves native PARTUUID)
     if let Err(e) = std::process::Command::new("parted")
         .args(["-s", "-m", &dev, "resizepart", &part.to_string(), "100%"])
         .output()
@@ -348,27 +357,13 @@ fn do_resize(app: &mut App) {
         return;
     }
 
-    // 6. Notify kernel of new partition boundary
+    // Notify kernel of new partition boundary
     let _ = std::process::Command::new("partprobe")
         .arg(&dev)
         .output();
 
-    // 7. Poll up to 5s for the partition device node
-    let part_dev_p = format!("{}p{}", dev, part);
-    let part_dev_n = format!("{}{}", dev, part);
-    let mut part_dev = None;
-    for _ in 0..50 {
-        if std::path::Path::new(&part_dev_p).exists() {
-            part_dev = Some(part_dev_p);
-            break;
-        }
-        if std::path::Path::new(&part_dev_n).exists() {
-            part_dev = Some(part_dev_n);
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-    let part_dev = match part_dev {
+    // Poll up to 5s for the partition device node
+    let part_dev = match wait_for_partition_device(&dev, part) {
         Some(path) => path,
         None => {
             app.notify("Partition device node did not appear in time.", crate::notification::NotificationLevel::Error);
@@ -376,35 +371,58 @@ fn do_resize(app: &mut App) {
         }
     };
 
-    // Detect and resize filesystem. XFS requires the partition to be
-    // mounted first; xfs_growfs takes a mount point, not a device path.
-    if let Ok(blkid) = std::process::Command::new("blkid")
-        .args(["-o", "value", "-s", "TYPE", &part_dev])
-        .output()
-    {
-        let fstype = String::from_utf8_lossy(&blkid.stdout).trim().to_string();
-        match fstype.as_str() {
-            "ext4" => {
-                let _ = std::process::Command::new("resize2fs").arg(&part_dev).output();
-            }
-            "xfs"  => {
-                let tmp_mnt = "/tmp/mnt_resize";
-                let _ = std::fs::create_dir_all(tmp_mnt);
-                if std::process::Command::new("mount")
-                    .args([&part_dev, tmp_mnt])
-                    .status()
-                    .map(|s| s.success())
-                    .unwrap_or(false)
-                {
-                    let _ = std::process::Command::new("xfs_growfs").arg(tmp_mnt).output();
-                    let _ = std::process::Command::new("umount").arg(tmp_mnt).output();
-                }
-            }
-            _ => {}
-        }
-    }
+    // Detect and resize filesystem
+    resize_filesystem(&part_dev);
 
     let _ = std::process::Command::new("sync").output();
 
     app.notify("Partition expanded!", crate::notification::NotificationLevel::Info);
+}
+
+// ── Helper: wait for partition device node ────────────────────────────────
+
+fn wait_for_partition_device(dev: &str, part: u32) -> Option<String> {
+    let candidates = [format!("{}p{}", dev, part), format!("{}{}", dev, part)];
+
+    for _ in 0..50 {
+        for candidate in &candidates {
+            if std::path::Path::new(candidate).exists() {
+                return Some(candidate.clone());
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    None
+}
+
+// ── Resize filesystem ────────────────────────────────────────────────────
+
+fn resize_filesystem(part_dev: &str) {
+    let blkid = match std::process::Command::new("blkid")
+        .args(["-o", "value", "-s", "TYPE", part_dev])
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return,
+    };
+    let fstype = String::from_utf8_lossy(&blkid.stdout).trim().to_string();
+    match fstype.as_str() {
+        "ext4" => {
+            let _ = std::process::Command::new("resize2fs").arg(part_dev).output();
+        }
+        "xfs"  => {
+            let tmp_mnt = "/tmp/mnt_resize";
+            let _ = std::fs::create_dir_all(tmp_mnt);
+            if std::process::Command::new("mount")
+                .args([part_dev, tmp_mnt])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                let _ = std::process::Command::new("xfs_growfs").arg(tmp_mnt).output();
+                let _ = std::process::Command::new("umount").arg(tmp_mnt).output();
+            }
+        }
+        _ => {}
+    }
 }
