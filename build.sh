@@ -328,17 +328,23 @@ fi
 
 echo "  拷贝 sgdisk 及其依赖库 ..."
 SG="${ROOTFS_DIR}/usr/sbin/sgdisk"
-install -m 755 -D "$SG" "${INITRAMFS_DIR}/sbin/sgdisk"
-ldd "$SG" 2>/dev/null | awk '/=> \// {print $3}' | xargs -r -I {} cp --parents -n {} "${INITRAMFS_DIR}/"
-cp --parents -n "${ROOTFS_DIR}$(readelf -l "$SG" 2>/dev/null | awk -F'[][]' '/INTERP/{getline; print $2}')" "${INITRAMFS_DIR}/" 2>/dev/null
+if [[ -f "$SG" ]]; then
+    install -m 755 -D "$SG" "${INITRAMFS_DIR}/sbin/sgdisk"
+    ldd "$SG" 2>/dev/null | grep -oE '/[^ ]+' | while read -r lib; do
+        (cd "${ROOTFS_DIR}" && cp --parents -n ".${lib}" "${INITRAMFS_DIR}/" 2>/dev/null || true)
+    done
+fi
 
 echo "  拷贝 setfont 及控制台字体 ..."
 SF="${ROOTFS_DIR}/usr/bin/setfont"
-if [ -f "$SF" ]; then
+if [[ -f "$SF" ]]; then
     install -m 755 -D "$SF" "${INITRAMFS_DIR}/usr/bin/setfont"
-    ldd "$SF" 2>/dev/null | awk '/=> \// {print $3}' | xargs -r -I {} cp --parents -n {} "${INITRAMFS_DIR}/"
-    cp --parents -n "${ROOTFS_DIR}$(readelf -l "$SF" 2>/dev/null | awk -F'[][]' '/INTERP/{getline; print $2}')" "${INITRAMFS_DIR}/" 2>/dev/null
-    cp --parents -n "${ROOTFS_DIR}/usr/share/consolefonts/ter-116n.psf.gz" "${INITRAMFS_DIR}/" 2>/dev/null
+    ldd "$SF" 2>/dev/null | grep -oE '/[^ ]+' | while read -r lib; do
+        (cd "${ROOTFS_DIR}" && cp --parents -n ".${lib}" "${INITRAMFS_DIR}/" 2>/dev/null || true)
+    done
+    if [[ -f "${ROOTFS_DIR}/usr/share/consolefonts/ter-116n.psf.gz" ]]; then
+        (cd "${ROOTFS_DIR}" && cp --parents -n "./usr/share/consolefonts/ter-116n.psf.gz" "${INITRAMFS_DIR}/" 2>/dev/null)
+    fi
 fi
 
 rm -rf "${ROOTFS_DIR}"
