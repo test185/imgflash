@@ -189,16 +189,4 @@ impl DiskInfo {
         }
         (false, None)
     }
-
-    pub fn mounted_str(&self) -> String {
-        if self.is_mounted {
-            if let Some(ref mp) = self.mount_point {
-                format!("mounted ({})", mp)
-            } else {
-                "mounted".to_string()
-            }
-        } else {
-            "unmounted".to_string()
-        }
-    }
 }
