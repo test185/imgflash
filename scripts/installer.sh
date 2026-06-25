@@ -18,7 +18,7 @@ trap 'if [ -n "$DD_PID" ]; then
 
 # 获取可写磁盘列表
 get_disks() {
-    for d in /sys/block/sd* /sys/block/nvme* /sys/block/vd* /sys/block/hd*; do
+    for d in /sys/block/sd* /sys/block/nvme* /sys/block/vd* /sys/block/hd* /sys/block/mmcblk*; do
         [ -d "$d" ] || continue
         [ "$(cat "$d/ro" 2>/dev/null)" = "0" ] || continue
         basename "$d"
@@ -155,7 +155,7 @@ do_install() {
     echo ""
     echo "Writing to $target ..."
 
-    dd if="$IMAGE_FILE" of="$target" bs=4M conv=fsync &
+    dd if="$IMAGE_FILE" of="$target" bs=4M conv=fsync,sparse &
     DD_PID=$!
     local start=$(date +%s)
     local prev_written=0

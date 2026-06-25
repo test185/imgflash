@@ -209,7 +209,7 @@ fn start_write(app: &mut App) -> anyhow::Result<()> {
         .arg(format!("if={}", App::IMAGE_FILE))
         .arg(format!("of=/dev/{}", disk.name))
         .arg("bs=4M")
-        .arg("conv=fsync")
+        .arg("conv=fsync,sparse")
         .arg("status=none")
         .spawn()
         .context("Failed to spawn dd process")?;
