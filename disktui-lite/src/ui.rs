@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table, Wrap},
+    widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table},
 };
 
 use crate::app::{App, ConfirmButton, Screen, SuccessAction};
@@ -72,8 +72,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     if area.width < 50 || area.height < 15 {
         let msg = Paragraph::new("Terminal too small!\n\nPlease enlarge to at least 50x15.")
             .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
-            .wrap(Wrap { trim: true });
+            .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD));
         frame.render_widget(msg, area);
         return;
     }
@@ -139,8 +138,7 @@ fn render_disks_table(app: &mut App, frame: &mut Frame, area: Rect) {
 
         let msg = Paragraph::new("No writable disks found!\n\nConnect a disk and press r to refresh.")
             .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
-            .wrap(Wrap { trim: true });
+            .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD));
         frame.render_widget(msg, inner);
         return;
     }

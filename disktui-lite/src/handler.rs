@@ -104,19 +104,23 @@ fn try_select_disk(app: &mut App) {
 
 // ── Confirmation ────────────────────────────────────────────────────────
 
+/// Handle Left/Right/Tab for Yes/No dialog navigation.
+fn handle_dialog_toggle(key: &crossterm::event::KeyEvent, btn: &mut ConfirmButton) {
+    use crossterm::event::KeyCode;
+    match key.code {
+        KeyCode::Left | KeyCode::Char('h') => *btn = ConfirmButton::No,
+        KeyCode::Right | KeyCode::Char('l') => *btn = ConfirmButton::Yes,
+        KeyCode::Tab => btn.toggle(),
+        _ => {}
+    }
+}
+
 fn handle_confirmation(key: crossterm::event::KeyEvent, app: &mut App) -> anyhow::Result<()> {
     use crossterm::event::KeyCode;
 
+    handle_dialog_toggle(&key, &mut app.confirm_button);
+
     match key.code {
-        KeyCode::Left | KeyCode::Char('h') => {
-            app.confirm_button = ConfirmButton::No;
-        }
-        KeyCode::Right | KeyCode::Char('l') => {
-            app.confirm_button = ConfirmButton::Yes;
-        }
-        KeyCode::Tab => {
-            app.confirm_button.toggle();
-        }
         KeyCode::Enter => {
             if app.confirm_button == ConfirmButton::Yes {
                 if let Err(e) = start_write(app) {
@@ -273,16 +277,9 @@ pub fn poll_dd_progress(app: &mut App) {
 fn handle_resize_prompt(key: crossterm::event::KeyEvent, app: &mut App) -> anyhow::Result<()> {
     use crossterm::event::KeyCode;
 
+    handle_dialog_toggle(&key, &mut app.confirm_button);
+
     match key.code {
-        KeyCode::Left | KeyCode::Char('h') => {
-            app.confirm_button = ConfirmButton::No;
-        }
-        KeyCode::Right | KeyCode::Char('l') => {
-            app.confirm_button = ConfirmButton::Yes;
-        }
-        KeyCode::Tab => {
-            app.confirm_button.toggle();
-        }
         KeyCode::Enter => {
             if app.confirm_button == ConfirmButton::Yes {
                 do_resize(app);
@@ -297,6 +294,13 @@ fn handle_resize_prompt(key: crossterm::event::KeyEvent, app: &mut App) -> anyho
 fn do_resize(app: &mut App) {
     let dev = format!("/dev/{}", app.written_disk_name);
 
+    // Move GPT backup header to the end of the disk — after dd'ing a
+    // smaller image to a larger disk, the backup header sits in the
+    // middle of the target and parted resizepart would refuse to proceed.
+    let _ = std::process::Command::new("/sbin/sgdisk")
+        .args(["-e", &dev])
+        .output();
+
     // Get last partition number
     let sg_out = match std::process::Command::new("/sbin/sgdisk")
         .args(["-p", &dev])
@@ -304,7 +308,7 @@ fn do_resize(app: &mut App) {
     {
         Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
         Err(e) => {
-            app.notify(format!("sgdisk failed: {}", e), crate::notification::NotificationLevel::Error);
+            app.notify(format!("sgdisk -p failed: {}", e), crate::notification::NotificationLevel::Error);
             return;
         }
     };
@@ -319,51 +323,74 @@ fn do_resize(app: &mut App) {
         }
     };
 
-    // Fix GPT backup header
-    if let Err(e) = std::process::Command::new("/sbin/sgdisk")
-        .args(["-g", &dev])
-        .output()
-    {
-        app.notify(format!("GPT repair failed: {}", e), crate::notification::NotificationLevel::Error);
-        return;
-    }
-
-    // Expand partition
-    if let Err(e) = std::process::Command::new("/sbin/sgdisk")
-        .args(["-d", &part.to_string(), "-N", &part.to_string(), &dev])
+    // Expand last partition to 100% with parted resizepart.
+    // We use this instead of sgdisk -d -N because the latter deletes
+    // and recreates the partition, generating a new PARTUUID that
+    // would break rootfs mounts via fstab on many Linux distros.
+    if let Err(e) = std::process::Command::new("parted")
+        .args(["-s", "-m", &dev, "resizepart", &part.to_string(), "100%"])
         .output()
     {
         app.notify(format!("Partition expansion failed: {}", e), crate::notification::NotificationLevel::Error);
         return;
     }
 
-    // Notify kernel
     let _ = std::process::Command::new("partprobe")
         .arg(&dev)
         .output();
-    std::thread::sleep(std::time::Duration::from_secs(1));
 
-    // Determine partition device path (probe both naming conventions)
+    // Poll up to 5s for the partition device node (mdev/udev in
+    // initramfs can be slow to create device nodes asynchronously).
     let part_dev_p = format!("{}p{}", dev, part);
     let part_dev_n = format!("{}{}", dev, part);
-    let part_dev = if std::path::Path::new(&part_dev_p).exists() {
-        part_dev_p
-    } else {
-        part_dev_n
+    let mut part_dev = None;
+    for _ in 0..50 {
+        if std::path::Path::new(&part_dev_p).exists() {
+            part_dev = Some(part_dev_p);
+            break;
+        }
+        if std::path::Path::new(&part_dev_n).exists() {
+            part_dev = Some(part_dev_n);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let part_dev = match part_dev {
+        Some(path) => path,
+        None => {
+            app.notify("Partition device node did not appear in time.", crate::notification::NotificationLevel::Error);
+            return;
+        }
     };
+
+    // Detect and resize filesystem. XFS requires the partition to be
+    // mounted first; xfs_growfs takes a mount point, not a device path.
     if let Ok(blkid) = std::process::Command::new("blkid")
         .args(["-o", "value", "-s", "TYPE", &part_dev])
         .output()
     {
         let fstype = String::from_utf8_lossy(&blkid.stdout).trim().to_string();
         match fstype.as_str() {
-            "ext4" => { let _ = std::process::Command::new("resize2fs").arg(&part_dev).output(); }
-            "xfs"  => { let _ = std::process::Command::new("xfs_growfs").arg(&part_dev).output(); }
+            "ext4" => {
+                let _ = std::process::Command::new("resize2fs").arg(&part_dev).output();
+            }
+            "xfs"  => {
+                let tmp_mnt = "/tmp/mnt_resize";
+                let _ = std::fs::create_dir_all(tmp_mnt);
+                if std::process::Command::new("mount")
+                    .args([&part_dev, tmp_mnt])
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
+                {
+                    let _ = std::process::Command::new("xfs_growfs").arg(tmp_mnt).output();
+                    let _ = std::process::Command::new("umount").arg(tmp_mnt).output();
+                }
+            }
             _ => {}
         }
     }
 
-    // Flush all pending writes to disk
     let _ = std::process::Command::new("sync").output();
 
     app.notify("Partition expanded!", crate::notification::NotificationLevel::Info);

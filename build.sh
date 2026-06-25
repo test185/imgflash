@@ -37,8 +37,8 @@ case "${ARCH}" in
     *) die "不支持的架构 '${ARCH}'（支持 amd64 / arm64）" ;;
 esac
 
-SIGNED_PKGS="${KERNEL_PKG},${GRUB_PKG},gdisk,kbd,console-setup-linux"
-[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && SIGNED_PKGS="${KERNEL_PKG},${SHIM_PKG},${GRUB_PKG},gdisk,kbd,console-setup-linux"
+SIGNED_PKGS="${KERNEL_PKG},${GRUB_PKG},gdisk,kbd,console-setup-linux,parted"
+[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && SIGNED_PKGS="${KERNEL_PKG},${SHIM_PKG},${GRUB_PKG},gdisk,kbd,console-setup-linux,parted"
 
 BASE_MODULES="${MOD_FILESYSTEM} ${MOD_NLS} ${MOD_ATA} ${MOD_USB} ${MOD_CDROM} ${MOD_INPUT} ${MOD_EMMC} ${MOD_EMMC_CARDREADER} ${MOD_EMMC_USB:-}"
 OPT_NVME=$([[ "${INCLUDE_NVME}" != "0" ]] && echo "${MOD_NVME}" || echo "")
