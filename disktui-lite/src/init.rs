@@ -30,7 +30,6 @@ pub fn run_init() -> anyhow::Result<()> {
     load_modules()?;
     scan_and_mount_boot_media()?;
     verify_image()?;
-    set_console_font();
 
     eprintln!("Init complete. Starting installer...");
     Ok(())
@@ -263,15 +262,4 @@ fn verify_image() -> anyhow::Result<()> {
         bail!("image.img not found in squashfs");
     }
     Ok(())
-}
-
-// ── Phase 7: Set Console Font ───────────────────────────────────────────
-
-fn set_console_font() {
-    let font_path = "/usr/share/consolefonts/ter-116n.psf.gz";
-    if Path::new(font_path).exists() {
-        let _ = std::process::Command::new("setfont")
-            .arg(font_path)
-            .status();
-    }
 }

@@ -37,8 +37,8 @@ case "${ARCH}" in
     *) die "不支持的架构 '${ARCH}'（支持 amd64 / arm64）" ;;
 esac
 
-SIGNED_PKGS="${KERNEL_PKG},${GRUB_PKG},gdisk,kbd,console-setup-linux,parted"
-[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && SIGNED_PKGS="${KERNEL_PKG},${SHIM_PKG},${GRUB_PKG},gdisk,kbd,console-setup-linux,parted"
+SIGNED_PKGS="${KERNEL_PKG},${GRUB_PKG},gdisk,parted"
+[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && SIGNED_PKGS="${KERNEL_PKG},${SHIM_PKG},${GRUB_PKG},gdisk,parted"
 
 BASE_MODULES="${MOD_FILESYSTEM} ${MOD_NLS} ${MOD_ATA} ${MOD_USB} ${MOD_CDROM} ${MOD_INPUT} ${MOD_EMMC} ${MOD_EMMC_CARDREADER} ${MOD_EMMC_USB:-}"
 OPT_NVME=$([[ "${INCLUDE_NVME}" != "0" ]] && echo "${MOD_NVME}" || echo "")
@@ -333,18 +333,6 @@ if [[ -f "$SG" ]]; then
     ldd "$SG" 2>/dev/null | grep -oE '/[^ ]+' | while read -r lib; do
         (cd "${ROOTFS_DIR}" && cp --parents -n ".${lib}" "${INITRAMFS_DIR}/" 2>/dev/null || true)
     done
-fi
-
-echo "  拷贝 setfont 及控制台字体 ..."
-SF="${ROOTFS_DIR}/usr/bin/setfont"
-if [[ -f "$SF" ]]; then
-    install -m 755 -D "$SF" "${INITRAMFS_DIR}/usr/bin/setfont"
-    ldd "$SF" 2>/dev/null | grep -oE '/[^ ]+' | while read -r lib; do
-        (cd "${ROOTFS_DIR}" && cp --parents -n ".${lib}" "${INITRAMFS_DIR}/" 2>/dev/null || true)
-    done
-    if [[ -f "${ROOTFS_DIR}/usr/share/consolefonts/ter-116n.psf.gz" ]]; then
-        (cd "${ROOTFS_DIR}" && cp --parents -n "./usr/share/consolefonts/ter-116n.psf.gz" "${INITRAMFS_DIR}/" 2>/dev/null)
-    fi
 fi
 
 rm -rf "${ROOTFS_DIR}"

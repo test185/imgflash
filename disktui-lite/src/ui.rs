@@ -9,9 +9,6 @@ use ratatui::{
 use crate::app::{App, ConfirmButton, Screen, SuccessAction};
 use crate::utils::format_bytes;
 
-// ── Shared UI strings ────────────────────────────────────────────────
-const CONFIRM_HINT: &str = "← → or Tab to select  |  Enter to confirm";
-
 /// Center a popup of given width/height within the terminal area.
 fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
@@ -323,10 +320,6 @@ fn render_confirmation_dialog(app: &App, frame: &mut Frame) {
         Line::from(""),
         yes_no_row(no_style, yes_style),
         Line::from(""),
-        Line::from(CONFIRM_HINT)
-            .style(Style::default().fg(Color::DarkGray))
-            .centered(),
-        Line::from(""),
     ]);
 }
 
@@ -479,10 +472,6 @@ fn render_resize_prompt_dialog(app: &App, frame: &mut Frame) {
             .centered(),
         Line::from(""),
         yes_no_row(no_style, yes_style),
-        Line::from(""),
-        Line::from(CONFIRM_HINT)
-            .style(Style::default().fg(Color::DarkGray))
-            .centered(),
     ]);
 }
 
@@ -541,12 +530,6 @@ fn render_success_screen(app: &App, frame: &mut Frame) {
                 back_btn,
             ])
             .centered(),
-        );
-        lines.push(Line::from(""));
-        lines.push(
-            Line::from(CONFIRM_HINT)
-                .style(Style::default().fg(Color::DarkGray))
-                .centered(),
         );
         lines.push(Line::from(""));
     }

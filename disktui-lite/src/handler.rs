@@ -293,40 +293,53 @@ fn handle_resize_prompt(key: crossterm::event::KeyEvent, app: &mut App) -> anyho
 
 fn do_resize(app: &mut App) {
     let dev = format!("/dev/{}", app.written_disk_name);
+    let disk_name = &app.written_disk_name;
 
-    // Move GPT backup header to the end of the disk — after dd'ing a
-    // smaller image to a larger disk, the backup header sits in the
-    // middle of the target and parted resizepart would refuse to proceed.
+    // 1. Flush dd data to disk before touching partition table
+    let _ = std::process::Command::new("sync").output();
+
+    // 2. Move GPT backup header to the end of the disk
     let _ = std::process::Command::new("/sbin/sgdisk")
         .args(["-e", &dev])
         .output();
 
-    // Get last partition number
-    let sg_out = match std::process::Command::new("/sbin/sgdisk")
-        .args(["-p", &dev])
-        .output()
-    {
-        Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
-        Err(e) => {
-            app.notify(format!("sgdisk -p failed: {}", e), crate::notification::NotificationLevel::Error);
-            return;
-        }
-    };
-    let part = match sg_out.lines()
-        .filter_map(|line| line.split_whitespace().next()?.parse::<u32>().ok())
+    // 3. Force kernel to re-read the partition table that dd just wrote.
+    //    Without this, /proc/partitions still reflects the old state.
+    let _ = std::process::Command::new("partprobe")
+        .arg(&dev)
+        .output();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    // 4. Read partition number from /proc/partitions (now up-to-date)
+    let proc_partitions = std::fs::read_to_string("/proc/partitions").unwrap_or_default();
+    let part: u32 = match proc_partitions.lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            if fields.len() != 4 { return None; }
+            let name = fields[3];
+            if !name.starts_with(disk_name) || name.len() == disk_name.len() { return None; }
+            let suffix = &name[disk_name.len()..]; // "p1" or "1"
+            suffix.trim_start_matches('p').parse::<u32>().ok()
+        })
         .last()
     {
         Some(p) => p,
         None => {
-            app.notify("No partitions found, cannot resize.", crate::notification::NotificationLevel::Error);
+            let diag = std::process::Command::new("/sbin/sgdisk")
+                .args(["-p", &dev])
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_else(|| "sgdisk unavailable".to_string());
+            app.notify(
+                format!("No partition found for {}: {}", disk_name, diag),
+                crate::notification::NotificationLevel::Error,
+            );
             return;
         }
     };
 
-    // Expand last partition to 100% with parted resizepart.
-    // We use this instead of sgdisk -d -N because the latter deletes
-    // and recreates the partition, generating a new PARTUUID that
-    // would break rootfs mounts via fstab on many Linux distros.
+    // 5. Expand last partition (preserves native PARTUUID)
     if let Err(e) = std::process::Command::new("parted")
         .args(["-s", "-m", &dev, "resizepart", &part.to_string(), "100%"])
         .output()
@@ -335,12 +348,12 @@ fn do_resize(app: &mut App) {
         return;
     }
 
+    // 6. Notify kernel of new partition boundary
     let _ = std::process::Command::new("partprobe")
         .arg(&dev)
         .output();
 
-    // Poll up to 5s for the partition device node (mdev/udev in
-    // initramfs can be slow to create device nodes asynchronously).
+    // 7. Poll up to 5s for the partition device node
     let part_dev_p = format!("{}p{}", dev, part);
     let part_dev_n = format!("{}{}", dev, part);
     let mut part_dev = None;
