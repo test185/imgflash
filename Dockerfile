@@ -5,7 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     mmdebstrap debian-archive-keyring \
     curl file \
-    xorriso squashfs-tools mtools dosfstools syslinux-common isolinux \
+    xorriso squashfs-tools mtools dosfstools grub-pc-bin \
     xz-utils bzip2 p7zip-full unzip zstd cpio kmod \
     busybox-static \
     && rm -rf /var/lib/apt/lists/*
