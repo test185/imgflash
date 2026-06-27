@@ -409,16 +409,17 @@ fi
 
 EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
 
-src="${GRUB_SRC}"
-[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && src="${SHIM_SRC}"
-
 EFI_STAGING=$(mktemp -d)
-mkdir -p "${EFI_STAGING}/EFI/BOOT"
-cp "$src" "${EFI_STAGING}/EFI/BOOT/${EFI_SHIM_NAME}"
-[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && \
-    cp "${GRUB_SRC}" "${EFI_STAGING}/EFI/BOOT/${EFI_GRUB_NAME}"
+mkdir -p "${EFI_STAGING}/EFI/BOOT" "${EFI_STAGING}/EFI/debian"
 
-echo "${GRUB_CFG}" > "${EFI_STAGING}/EFI/BOOT/grub.cfg"
+T="${EFI_STAGING}/EFI"
+boot_src="${GRUB_SRC}"
+[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && boot_src="${SHIM_SRC}"
+cp "${boot_src}" "${T}/BOOT/${EFI_SHIM_NAME}"
+[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && cp "${GRUB_SRC}" "${T}/debian/${EFI_GRUB_NAME}"
+
+echo "${GRUB_CFG}"                     > "${T}/debian/grub.cfg"
+echo "configfile /EFI/debian/grub.cfg" > "${T}/BOOT/grub.cfg"
 
 EFI_SIZE_KB=$(( $(du -skL "${EFI_STAGING}" | awk '{print $1}') + 512 ))
 echo "  EFI 镜像: ${EFI_SIZE_KB} KB"
@@ -451,6 +452,7 @@ if [[ "${HAS_BIOS}" -eq 1 ]]; then
         -eltorito-boot boot/grub/core.img \
             -no-emul-boot \
             -boot-info-table \
+            --eltorito-catalog boot/grub/boot.cat \
         -eltorito-alt-boot \
             -e boot/grub/efi.img \
             -no-emul-boot \
