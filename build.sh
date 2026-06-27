@@ -45,6 +45,10 @@ OPT_NVME=$([[ "${INCLUDE_NVME}" != "0" ]] && echo "${MOD_NVME}" || echo "")
 OPT_VIRT=$([[ "${INCLUDE_VIRT}" != "0" ]] && echo "${MOD_VIRT}" || echo "")
 REQUIRED_MODULES="${BASE_MODULES} ${OPT_NVME} ${OPT_VIRT}"
 
+ISOLINUX_BIN=$(find /usr -name isolinux.bin 2>/dev/null | head -1)
+LDLINUX_C32=$(find /usr -name ldlinux.c32 2>/dev/null | head -1)
+ISOHDPFX_PATH=$(find /usr -name isohdpfx.bin 2>/dev/null | head -1)
+
 # --- 构建目录 ---
 BUILD_DIR="${SCRIPT_DIR}/build"
 ROOTFS_DIR="${BUILD_DIR}/rootfs"
@@ -375,11 +379,43 @@ mv "${VMLINUZ}" "${ISO_DIR}/boot/vmlinuz"
 mv "${BUILD_DIR}/initrd.img" "${ISO_DIR}/boot/initrd.img"
 mv "${BUILD_DIR}/image.squashfs" "${ISO_DIR}/image.squashfs"
 
-mkdir -p "${ISO_DIR}/boot/grub"
+if [[ "${HAS_BIOS}" -eq 1 ]]; then
+    [[ -n "${ISOLINUX_BIN}" && -n "${LDLINUX_C32}" && -n "${ISOHDPFX_PATH}" ]] || \
+        die "未找到 syslinux 引导文件。请安装 syslinux-common 和 isolinux 包。"
 
-# 定义一次，写入两处（ISO 层 + efi.img 内部）
+    mkdir -p "${ISO_DIR}/boot/syslinux"
+    cp "${ISOLINUX_BIN}"  "${ISO_DIR}/boot/syslinux/isolinux.bin"
+    cp "${LDLINUX_C32}"   "${ISO_DIR}/boot/syslinux/ldlinux.c32"
+
+    SYSLINUX_TIMEOUT=$(( BOOT_TIMEOUT * 10 ))
+
+    cat > "${ISO_DIR}/boot/syslinux/syslinux.cfg" << EOF
+DEFAULT imgflash
+PROMPT 0
+TIMEOUT ${SYSLINUX_TIMEOUT}
+
+LABEL imgflash
+  KERNEL /boot/vmlinuz
+  INITRD /boot/initrd.img
+  APPEND ${KERNEL_PARAMS}
+EOF
+fi
+
+mkdir -p "${ISO_DIR}/boot/grub"
+EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
+
+src="${GRUB_SRC}"
+[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && src="${SHIM_SRC}"
+
+# 用 staging 目录实测大小，避免硬编码估算
+EFI_STAGING=$(mktemp -d)
+mkdir -p "${EFI_STAGING}/EFI/BOOT"
+cp "$src" "${EFI_STAGING}/EFI/BOOT/${EFI_SHIM_NAME}"
+[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && \
+    cp "${GRUB_SRC}" "${EFI_STAGING}/EFI/BOOT/${EFI_GRUB_NAME}"
+
 TIMEOUT_STYLE=$([[ "${BOOT_TIMEOUT}" -eq 0 ]] && echo "hidden" || echo "menu")
-GRUB_CFG=$(cat << EOF
+cat > "${EFI_STAGING}/EFI/BOOT/grub.cfg" << EOF
 search --no-floppy --label --set=root ${VOLUME_LABEL}
 set timeout=${BOOT_TIMEOUT}
 set timeout_style=${TIMEOUT_STYLE}
@@ -390,23 +426,6 @@ menuentry "ImgFlash" {
     initrd /boot/initrd.img
 }
 EOF
-)
-
-echo "${GRUB_CFG}" > "${ISO_DIR}/boot/grub/grub.cfg"
-
-EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
-
-EFI_STAGING=$(mktemp -d)
-mkdir -p "${EFI_STAGING}/EFI/BOOT" "${EFI_STAGING}/EFI/debian"
-
-T="${EFI_STAGING}/EFI"
-boot_src="${GRUB_SRC}"
-[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && boot_src="${SHIM_SRC}"
-cp "${boot_src}" "${T}/BOOT/${EFI_SHIM_NAME}"
-[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && cp "${GRUB_SRC}" "${T}/debian/${EFI_GRUB_NAME}"
-
-echo "${GRUB_CFG}"                     > "${T}/debian/grub.cfg"
-echo "configfile /EFI/debian/grub.cfg" > "${T}/BOOT/grub.cfg"
 
 EFI_SIZE_KB=$(( $(du -skL "${EFI_STAGING}" | awk '{print $1}') + 512 ))
 echo "  EFI 镜像: ${EFI_SIZE_KB} KB"
@@ -427,25 +446,21 @@ echo ""; echo "[Phase 6] 生成 ISO ..."
 FINAL_ISO="${OUTPUT_DIR}/${ISO_NAME}.iso"
 
 if [[ "${HAS_BIOS}" -eq 1 ]]; then
-    GRUB_BOOT_IMG=/usr/lib/grub/i386-pc/boot_hybrid.img
-    [[ -f "${GRUB_BOOT_IMG}" ]] || die "未找到 ${GRUB_BOOT_IMG}，请确认 grub-pc-bin 包。"
-
     xorriso -as mkisofs \
         -iso-level 3 \
         -o "${FINAL_ISO}" \
         -full-iso9660-filenames \
         -volid "${VOLUME_LABEL}" \
-        \
-        --grub2-mbr "${GRUB_BOOT_IMG}" \
-        -partition_offset 16 \
-        --mbr-force-bootable \
-        \
+        -isohybrid-mbr "${ISOHDPFX_PATH}" \
+        -eltorito-boot boot/syslinux/isolinux.bin \
+            -no-emul-boot \
+            -boot-info-table \
+            --eltorito-catalog boot/syslinux/boot.cat \
         -eltorito-alt-boot \
             -e boot/grub/efi.img \
             -no-emul-boot \
-        \
+        -isohybrid-gpt-basdat \
         -append_partition 2 0xef "${ISO_DIR}/boot/grub/efi.img" \
-        -appended_part_as_gpt \
         "${ISO_DIR}"
 else
     xorriso -as mkisofs \
