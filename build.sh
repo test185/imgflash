@@ -321,7 +321,7 @@ for mod_file in $NEEDED_FILES; do
     xz -dc "$mod_file" > "${dest_dir}/$(basename "${rel_path%.xz}")"
 done
 
-for f in modules.builtin modules.builtin.modinfo modules.order; do
+for f in modules.builtin modules.builtin.modinfo; do
     [ -f "${MOD_SRC}/$f" ] && cp "${MOD_SRC}/$f" "${MOD_DEST}/"
 done
 
@@ -402,16 +402,21 @@ LABEL imgflash
 EOF
 fi
 
-mkdir -p "${ISO_DIR}/EFI/BOOT"
+mkdir -p "${ISO_DIR}/boot/grub"
+EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
+
 src="${GRUB_SRC}"
 [[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && src="${SHIM_SRC}"
 
-cp "$src" "${ISO_DIR}/EFI/BOOT/${EFI_SHIM_NAME}"
-[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && cp "${GRUB_SRC}" "${ISO_DIR}/EFI/BOOT/${EFI_GRUB_NAME}"
+# 用 staging 目录实测大小，避免硬编码估算
+EFI_STAGING=$(mktemp -d)
+mkdir -p "${EFI_STAGING}/EFI/BOOT"
+cp "$src" "${EFI_STAGING}/EFI/BOOT/${EFI_SHIM_NAME}"
+[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && \
+    cp "${GRUB_SRC}" "${EFI_STAGING}/EFI/BOOT/${EFI_GRUB_NAME}"
 
 TIMEOUT_STYLE=$([[ "${BOOT_TIMEOUT}" -eq 0 ]] && echo "hidden" || echo "menu")
-
-cat > "${ISO_DIR}/EFI/BOOT/grub.cfg" << EOF
+cat > "${EFI_STAGING}/EFI/BOOT/grub.cfg" << EOF
 search --no-floppy --label --set=root ${VOLUME_LABEL}
 set timeout=${BOOT_TIMEOUT}
 set timeout_style=${TIMEOUT_STYLE}
@@ -423,16 +428,14 @@ menuentry "ImgFlash" {
 }
 EOF
 
-mkdir -p "${ISO_DIR}/boot/grub"
-EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
-FINAL_KB=$(( $(du -skL "${ISO_DIR}/EFI/BOOT" | awk '{print $1}') + 512 ))
-echo "  EFI 镜像: ${FINAL_KB} KB"
+EFI_SIZE_KB=$(( $(du -skL "${EFI_STAGING}" | awk '{print $1}') + 512 ))
+echo "  EFI 镜像: ${EFI_SIZE_KB} KB"
 
-dd if=/dev/zero of="${EFI_IMG}" bs=1k count="${FINAL_KB}" 2>/dev/null
+dd if=/dev/zero of="${EFI_IMG}" bs=1k count="${EFI_SIZE_KB}" 2>/dev/null
 mkfs.vfat "${EFI_IMG}" >/dev/null
 
-mmd -i "${EFI_IMG}" ::EFI
-mcopy -s -i "${EFI_IMG}" "${ISO_DIR}/EFI/BOOT" ::EFI
+mcopy -s -i "${EFI_IMG}" "${EFI_STAGING}/EFI" ::EFI
+rm -rf "${EFI_STAGING}"
 
 echo "  Phase 5 完成。"
 
