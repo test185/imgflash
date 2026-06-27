@@ -453,9 +453,8 @@ else
         -o "${FINAL_ISO}" \
         -full-iso9660-filenames \
         -volid "${VOLUME_LABEL}" \
-        -eltorito-alt-boot \
-            -e boot/grub/efi.img \
-            -no-emul-boot \
+        -e boot/grub/efi.img \
+        -no-emul-boot \
         "${ISO_DIR}"
 fi
 
