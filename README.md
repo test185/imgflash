@@ -32,7 +32,7 @@
 
 ## 演示
 
-<img width="1918" height="1439" alt="test" src="https://github.com/user-attachments/assets/d98c549c-c015-4896-9839-631735c474e6" />
+![演示](https://github.com/user-attachments/assets/d98c549c-c015-4896-9839-631735c474e6)
 
 ## 架构
 
@@ -41,7 +41,7 @@
 - **amd64**：UEFI + BIOS 双启动
   - UEFI 链（Secure Boot）：shim（Microsoft 签名）→ GRUB（Debian 签名）→ vmlinuz（Debian 签名）
   - UEFI 链（非 Secure Boot）：GRUB → vmlinuz
-  - BIOS 链：syslinux → vmlinuz
+  - BIOS 链：GRUB（core.img）→ vmlinuz
 - **arm64**：UEFI 单启动
   - UEFI 链：同 amd64，按 Secure Boot 配置决定
 - **运行时**：
