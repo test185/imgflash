@@ -436,9 +436,9 @@ if [[ "${HAS_BIOS}" -eq 1 ]]; then
         -full-iso9660-filenames \
         -volid "${VOLUME_LABEL}" \
         \
-        -boot_image grub grub2_mbr="${GRUB_BOOT_IMG}" \
-        -boot_image grub partition_table=on \
-        -boot_image grub part_like_isohybrid=on \
+        --grub2-mbr "${GRUB_BOOT_IMG}" \
+        -partition_offset 16 \
+        --mbr-force-bootable \
         \
         -eltorito-alt-boot \
             -e boot/grub/efi.img \
