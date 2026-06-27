@@ -188,7 +188,7 @@ done
 
 # --- 依赖检查 ---
 echo "==== 依赖检查 ===="
-REQUIRED_CMDS="mmdebstrap curl tar xz zstd modprobe depmod mksquashfs xorriso mcopy mmd mkfs.vfat cpio file sha256sum"
+REQUIRED_CMDS="mmdebstrap curl tar xz zstd modprobe depmod mksquashfs xorriso mcopy mkfs.vfat cpio file sha256sum"
 for cmd in ${REQUIRED_CMDS}; do
     command -v "$cmd" &>/dev/null || die "缺少必要命令 '$cmd'，请先安装"
 done
@@ -394,19 +394,6 @@ EOF
 
 echo "${GRUB_CFG}" > "${ISO_DIR}/boot/grub/grub.cfg"
 
-if [[ "${HAS_BIOS}" -eq 1 ]]; then
-    command -v grub-mkimage &>/dev/null || die "未找到 grub-mkimage，请安装 grub-pc-bin 包。"
-
-    echo "  生成 GRUB BIOS 核心镜像 (core.img) ..."
-    grub-mkimage -p /boot/grub -O i386-pc \
-        -o "${ISO_DIR}/boot/grub/core.img" \
-        iso9660 biosdisk \
-        part_msdos part_gpt \
-        search search_fs_file search_fs_uuid \
-        normal configfile \
-        linux linux16
-fi
-
 EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
 
 EFI_STAGING=$(mktemp -d)
@@ -440,7 +427,7 @@ echo ""; echo "[Phase 6] 生成 ISO ..."
 FINAL_ISO="${OUTPUT_DIR}/${ISO_NAME}.iso"
 
 if [[ "${HAS_BIOS}" -eq 1 ]]; then
-    GRUB_BOOT_IMG=/usr/lib/grub/i386-pc/boot.img
+    GRUB_BOOT_IMG=/usr/lib/grub/i386-pc/boot_hybrid.img
     [[ -f "${GRUB_BOOT_IMG}" ]] || die "未找到 ${GRUB_BOOT_IMG}，请确认 grub-pc-bin 包。"
 
     xorriso -as mkisofs \
@@ -448,16 +435,17 @@ if [[ "${HAS_BIOS}" -eq 1 ]]; then
         -o "${FINAL_ISO}" \
         -full-iso9660-filenames \
         -volid "${VOLUME_LABEL}" \
-        -isohybrid-mbr "${GRUB_BOOT_IMG}" \
-        -eltorito-boot boot/grub/core.img \
-            -no-emul-boot \
-            -boot-info-table \
-            --eltorito-catalog boot/grub/boot.cat \
+        \
+        -boot_image grub grub2_mbr="${GRUB_BOOT_IMG}" \
+        -boot_image grub partition_table=on \
+        -boot_image grub part_like_isohybrid=on \
+        \
         -eltorito-alt-boot \
             -e boot/grub/efi.img \
             -no-emul-boot \
-        -isohybrid-gpt-basdat \
+        \
         -append_partition 2 0xef "${ISO_DIR}/boot/grub/efi.img" \
+        -appended_part_as_gpt \
         "${ISO_DIR}"
 else
     xorriso -as mkisofs \
@@ -468,7 +456,6 @@ else
         -eltorito-alt-boot \
             -e boot/grub/efi.img \
             -no-emul-boot \
-        -append_partition 2 0xef "${ISO_DIR}/boot/grub/efi.img" \
         "${ISO_DIR}"
 fi
 
