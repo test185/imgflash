@@ -271,8 +271,8 @@ else
 fi
 
 if [[ "${USE_TUI}" == "1" ]]; then
-    [[ -f "/build/binaries/disktui-lite" ]] || die "找不到 /build/binaries/disktui-lite，请先构建 disktui-lite"
-    cp /build/binaries/disktui-lite "${INITRAMFS_DIR}/usr/bin/disktui-lite"
+    [[ -f "${SCRIPT_DIR}/binaries/disktui-lite" ]] || die "找不到 disktui-lite，请先构建"
+    cp "${SCRIPT_DIR}/binaries/disktui-lite" "${INITRAMFS_DIR}/usr/bin/disktui-lite"
     chmod +x "${INITRAMFS_DIR}/usr/bin/disktui-lite"
     ln -s /usr/bin/disktui-lite "${INITRAMFS_DIR}/init"
 else
@@ -336,7 +336,7 @@ echo "  模块：${MOD_COUNT} 个文件，${MOD_SIZE}"
 
 echo "  创建 initramfs 归档 ..."
 cd "${INITRAMFS_DIR}"
-find . -print0 | sort -z | cpio --null -o -H newc --owner root:root 2>/dev/null | zstd -${ZSTD_LEVEL} > "${BUILD_DIR}/initrd.img"
+find . -print0 | sort -z | cpio --null -o -H newc --owner root:root 2>/dev/null | zstd -T0 -${ZSTD_LEVEL} > "${BUILD_DIR}/initrd.img"
 cd "${SCRIPT_DIR}"
 
 INITRD_SIZE=$(ls -lh "${BUILD_DIR}/initrd.img" | awk '{print $5}')
@@ -488,7 +488,7 @@ else
 fi
 
 rm -rf "${ISO_DIR}"
-[ "$(uname)" = "Linux" ] && chown "$(id -u):$(id -g)" "${FINAL_ISO}" 2>/dev/null || true
+[ "$(uname)" = "Linux" ] && chown "${SUDO_UID:-$(id -u)}:${SUDO_GID:-$(id -g)}" "${FINAL_ISO}" 2>/dev/null || true
 
 BUILD_SUCCESS=1
 
