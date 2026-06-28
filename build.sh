@@ -424,6 +424,7 @@ echo "  EFI 镜像: ${FINAL_KB} KB"
 dd if=/dev/zero of="${EFI_IMG}" bs=1k count="${FINAL_KB}" 2>/dev/null
 mkfs.vfat "${EFI_IMG}" >/dev/null
 
+mmd -i "${EFI_IMG}" ::EFI
 mcopy -s -i "${EFI_IMG}" "${ISO_DIR}/EFI/BOOT" ::EFI
 
 echo "  Phase 5 完成。"
