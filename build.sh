@@ -85,14 +85,6 @@ retry() {
     done
 }
 
-format_size() {
-    local bytes=$(du -sb "$1" 2>/dev/null | awk '{print $1}')
-    [ -z "$bytes" ] && { echo "0.00 B"; return; }
-    local unit="MiB" divisor=$((1024*1024))
-    [ "$bytes" -ge $((1024*1024*1024)) ] && { unit="GiB"; divisor=$((1024*1024*1024)); }
-    awk "BEGIN { printf \"%.2f %s\", $bytes / $divisor, \"$unit\" }"
-}
-
 download_image() {
     local url="$1" checksum="$2"
     echo "  正在下载：${url}"
@@ -192,7 +184,7 @@ done
 
 # --- 依赖检查 ---
 echo "==== 依赖检查 ===="
-REQUIRED_CMDS="mmdebstrap curl tar xz zstd modprobe depmod mksquashfs xorriso mcopy mkfs.vfat cpio file sha256sum"
+REQUIRED_CMDS="mmdebstrap curl tar xz zstd modprobe depmod mksquashfs xorriso mcopy mmd mkfs.vfat cpio file sha256sum"
 for cmd in ${REQUIRED_CMDS}; do
     command -v "$cmd" &>/dev/null || die "缺少必要命令 '$cmd'，请先安装"
 done
@@ -338,14 +330,17 @@ fi
 rm -rf "${ROOTFS_DIR}"
 depmod -b "${INITRAMFS_DIR}" "${KVER}"
 
-echo "  模块：$(find "${INITRAMFS_DIR}/lib/modules" -name '*.ko' | wc -l) 个文件，$(format_size "${INITRAMFS_DIR}/lib/modules")"
+MOD_COUNT=$(find "${INITRAMFS_DIR}/lib/modules" -name '*.ko' | wc -l)
+MOD_SIZE=$(du -sh "${INITRAMFS_DIR}/lib/modules" | awk '{print $1}')
+echo "  模块：${MOD_COUNT} 个文件，${MOD_SIZE}"
 
 echo "  创建 initramfs 归档 ..."
 cd "${INITRAMFS_DIR}"
 find . -print0 | sort -z | cpio --null -o -H newc --owner root:root 2>/dev/null | zstd -${ZSTD_LEVEL} > "${BUILD_DIR}/initrd.img"
 cd "${SCRIPT_DIR}"
 
-echo "  Initramfs 大小：$(format_size "${BUILD_DIR}/initrd.img")"
+INITRD_SIZE=$(ls -lh "${BUILD_DIR}/initrd.img" | awk '{print $5}')
+echo "  Initramfs 大小：${INITRD_SIZE}"
 
 rm -rf "${INITRAMFS_DIR}"
 echo "  Phase 3 完成。"
@@ -357,15 +352,14 @@ echo ""; echo "[Phase 4] 打包镜像容器 ..."
 
 mv "${BUILD_DIR}/temp.img" "${BUILD_DIR}/image.img"
 fallocate --dig-holes "${BUILD_DIR}/image.img" 2>/dev/null || true
-
-echo "  原始镜像大小：$(format_size "${BUILD_DIR}/image.img")"
+echo "  原始镜像大小：$(ls -lh "${BUILD_DIR}/image.img" | awk '{print $5}')"
 
 echo "  创建 squashfs（zstd）..."
 mksquashfs "${BUILD_DIR}/image.img" "${BUILD_DIR}/image.squashfs" \
     -b 1M -comp zstd -Xcompression-level ${ZSTD_LEVEL} \
     -no-fragments -no-duplicates -no-progress -no-xattrs
 
-echo "  Squashfs 大小：$(format_size "${BUILD_DIR}/image.squashfs")"
+echo "  Squashfs 大小：$(ls -lh "${BUILD_DIR}/image.squashfs" | awk '{print $5}')"
 rm -f "${BUILD_DIR}/image.img"
 echo "  Phase 4 完成。"
 
@@ -401,21 +395,16 @@ LABEL imgflash
 EOF
 fi
 
-mkdir -p "${ISO_DIR}/boot/grub"
-EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
-
+mkdir -p "${ISO_DIR}/EFI/BOOT"
 src="${GRUB_SRC}"
 [[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && src="${SHIM_SRC}"
 
-# 用 staging 目录实测大小，避免硬编码估算
-EFI_STAGING=$(mktemp -d)
-mkdir -p "${EFI_STAGING}/EFI/BOOT"
-cp "$src" "${EFI_STAGING}/EFI/BOOT/${EFI_SHIM_NAME}"
-[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && \
-    cp "${GRUB_SRC}" "${EFI_STAGING}/EFI/BOOT/${EFI_GRUB_NAME}"
+cp "$src" "${ISO_DIR}/EFI/BOOT/${EFI_SHIM_NAME}"
+[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && cp "${GRUB_SRC}" "${ISO_DIR}/EFI/BOOT/${EFI_GRUB_NAME}"
 
 TIMEOUT_STYLE=$([[ "${BOOT_TIMEOUT}" -eq 0 ]] && echo "hidden" || echo "menu")
-cat > "${EFI_STAGING}/EFI/BOOT/grub.cfg" << EOF
+
+cat > "${ISO_DIR}/EFI/BOOT/grub.cfg" << EOF
 search --no-floppy --label --set=root ${VOLUME_LABEL}
 set timeout=${BOOT_TIMEOUT}
 set timeout_style=${TIMEOUT_STYLE}
@@ -427,14 +416,15 @@ menuentry "ImgFlash" {
 }
 EOF
 
-EFI_SIZE_KB=$(( $(du -skL "${EFI_STAGING}" | awk '{print $1}') + 512 ))
-echo "  EFI 镜像: ${EFI_SIZE_KB} KB"
+mkdir -p "${ISO_DIR}/boot/grub"
+EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
+FINAL_KB=$(( $(du -skL "${ISO_DIR}/EFI/BOOT" | awk '{print $1}') + 512 ))
+echo "  EFI 镜像: ${FINAL_KB} KB"
 
-dd if=/dev/zero of="${EFI_IMG}" bs=1k count="${EFI_SIZE_KB}" 2>/dev/null
+dd if=/dev/zero of="${EFI_IMG}" bs=1k count="${FINAL_KB}" 2>/dev/null
 mkfs.vfat "${EFI_IMG}" >/dev/null
 
-mcopy -s -i "${EFI_IMG}" "${EFI_STAGING}/EFI" ::EFI
-rm -rf "${EFI_STAGING}"
+mcopy -s -i "${EFI_IMG}" "${ISO_DIR}/EFI/BOOT" ::EFI
 
 echo "  Phase 5 完成。"
 
@@ -481,4 +471,4 @@ BUILD_SUCCESS=1
 echo ""; echo "=================="
 echo "  构建完成！"
 echo "=================="
-echo "  产物：${FINAL_ISO} ($(format_size "${FINAL_ISO}"))"
+echo "  产物：${FINAL_ISO} ($(du -h "${FINAL_ISO}" | awk '{print $1}'))"
