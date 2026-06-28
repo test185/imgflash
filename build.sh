@@ -373,6 +373,7 @@ mv "${VMLINUZ}" "${ISO_DIR}/boot/vmlinuz"
 mv "${BUILD_DIR}/initrd.img" "${ISO_DIR}/boot/initrd.img"
 mv "${BUILD_DIR}/image.squashfs" "${ISO_DIR}/image.squashfs"
 
+# --- BIOS 引导（syslinux，仅 amd64） ---
 if [[ "${HAS_BIOS}" -eq 1 ]]; then
     [[ -n "${ISOLINUX_BIN}" && -n "${LDLINUX_C32}" && -n "${ISOHDPFX_PATH}" ]] || \
         die "未找到 syslinux 引导文件。请安装 syslinux-common 和 isolinux 包。"
@@ -395,26 +396,15 @@ LABEL imgflash
 EOF
 fi
 
-mkdir -p "${ISO_DIR}/boot/grub"
-EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
-EFI_FILES="${GRUB_SRC}"
-[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && EFI_FILES="${SHIM_SRC} ${GRUB_SRC}"
-EFI_SIZE_KB=$(( $(du -skL ${EFI_FILES} 2>/dev/null | awk '{s+=$1} END {print s}') + 512 ))
-echo "  EFI 镜像: ${EFI_SIZE_KB} KB"
-
-dd if=/dev/zero of="${EFI_IMG}" bs=1k count="${EFI_SIZE_KB}" 2>/dev/null
-mkfs.vfat "${EFI_IMG}" >/dev/null
-
-mmd -i "${EFI_IMG}" ::EFI ::EFI/BOOT
-
-src="${GRUB_SRC}"
-[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && src="${SHIM_SRC}"
-mcopy -i "${EFI_IMG}" "$src" ::EFI/BOOT/${EFI_SHIM_NAME}
-[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && mcopy -i "${EFI_IMG}" "${GRUB_SRC}" ::EFI/BOOT/${EFI_GRUB_NAME}
+# --- UEFI 引导：ISO 根目录（厂商 fallback） + efi.img（El Torito 标准） ---
+# ISO 根目录：EFI/BOOT/ 供固件 fallback 直接加载
+# ISO 根目录：EFI/debian/grub.cfg 存放唯一真实配置
+# efi.img：放引导文件 + 2 行 stub（search + configfile 指向 ISO 根的真实配置）
 
 TIMEOUT_STYLE=$([[ "${BOOT_TIMEOUT}" -eq 0 ]] && echo "hidden" || echo "menu")
 
-mcopy -i "${EFI_IMG}" - ::EFI/BOOT/grub.cfg << EOF
+# 唯一真实配置
+CONFIG_CONTENT=$(cat << CONFIG_EOF
 search --no-floppy --label --set=root ${VOLUME_LABEL}
 set timeout=${BOOT_TIMEOUT}
 set timeout_style=${TIMEOUT_STYLE}
@@ -424,7 +414,41 @@ menuentry "ImgFlash" {
     linux /boot/vmlinuz ${KERNEL_PARAMS}
     initrd /boot/initrd.img
 }
-EOF
+CONFIG_EOF
+)
+
+# 1. ISO 根：EFI 引导文件 + 真实配置
+mkdir -p "${ISO_DIR}/EFI/BOOT" "${ISO_DIR}/EFI/debian"
+
+src="${GRUB_SRC}"
+[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && src="${SHIM_SRC}"
+cp "$src" "${ISO_DIR}/EFI/BOOT/${EFI_SHIM_NAME}"
+[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && cp "${GRUB_SRC}" "${ISO_DIR}/EFI/BOOT/${EFI_GRUB_NAME}"
+
+echo "${CONFIG_CONTENT}" > "${ISO_DIR}/EFI/debian/grub.cfg"
+
+# 2. efi.img：引导文件 + stub 配置 → 指向 ISO 根的真实配置
+mkdir -p "${ISO_DIR}/boot/grub"
+EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
+EFI_FILES="${GRUB_SRC}"
+[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && EFI_FILES="${SHIM_SRC} ${GRUB_SRC}"
+EFI_SIZE_KB=$(( $(du -skL ${EFI_FILES} 2>/dev/null | awk '{s+=$1} END {print s}') + 580 ))
+echo "  EFI 镜像: ${EFI_SIZE_KB} KB"
+
+dd if=/dev/zero of="${EFI_IMG}" bs=1k count="${EFI_SIZE_KB}" 2>/dev/null
+mkfs.vfat "${EFI_IMG}" >/dev/null
+mmd -i "${EFI_IMG}" ::EFI ::EFI/BOOT ::EFI/debian
+
+src="${GRUB_SRC}"
+[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && src="${SHIM_SRC}"
+mcopy -i "${EFI_IMG}" "$src" ::EFI/BOOT/${EFI_SHIM_NAME}
+[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && mcopy -i "${EFI_IMG}" "${GRUB_SRC}" ::EFI/BOOT/${EFI_GRUB_NAME}
+
+# stub：先定位 ISO 根目录，再加载真实配置
+mcopy -i "${EFI_IMG}" - ::EFI/debian/grub.cfg << STUB_EOF
+search --no-floppy --label --set=root ${VOLUME_LABEL}
+configfile /EFI/debian/grub.cfg
+STUB_EOF
 
 echo "  Phase 5 完成。"
 
