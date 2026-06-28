@@ -395,16 +395,26 @@ LABEL imgflash
 EOF
 fi
 
-mkdir -p "${ISO_DIR}/EFI/BOOT"
+mkdir -p "${ISO_DIR}/boot/grub"
+EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
+EFI_FILES="${GRUB_SRC}"
+[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && EFI_FILES="${SHIM_SRC} ${GRUB_SRC}"
+EFI_SIZE_KB=$(( $(du -skL ${EFI_FILES} 2>/dev/null | awk '{s+=$1} END {print s}') + 512 ))
+echo "  EFI 镜像: ${EFI_SIZE_KB} KB"
+
+dd if=/dev/zero of="${EFI_IMG}" bs=1k count="${EFI_SIZE_KB}" 2>/dev/null
+mkfs.vfat "${EFI_IMG}" >/dev/null
+
+mmd -i "${EFI_IMG}" ::EFI ::EFI/BOOT
+
 src="${GRUB_SRC}"
 [[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && src="${SHIM_SRC}"
-
-cp "$src" "${ISO_DIR}/EFI/BOOT/${EFI_SHIM_NAME}"
-[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && cp "${GRUB_SRC}" "${ISO_DIR}/EFI/BOOT/${EFI_GRUB_NAME}"
+mcopy -i "${EFI_IMG}" "$src" ::EFI/BOOT/${EFI_SHIM_NAME}
+[[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && mcopy -i "${EFI_IMG}" "${GRUB_SRC}" ::EFI/BOOT/${EFI_GRUB_NAME}
 
 TIMEOUT_STYLE=$([[ "${BOOT_TIMEOUT}" -eq 0 ]] && echo "hidden" || echo "menu")
 
-cat > "${ISO_DIR}/EFI/BOOT/grub.cfg" << EOF
+mcopy -i "${EFI_IMG}" - ::EFI/BOOT/grub.cfg << EOF
 search --no-floppy --label --set=root ${VOLUME_LABEL}
 set timeout=${BOOT_TIMEOUT}
 set timeout_style=${TIMEOUT_STYLE}
@@ -415,17 +425,6 @@ menuentry "ImgFlash" {
     initrd /boot/initrd.img
 }
 EOF
-
-mkdir -p "${ISO_DIR}/boot/grub"
-EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
-FINAL_KB=$(( $(du -skL "${ISO_DIR}/EFI/BOOT" | awk '{print $1}') + 512 ))
-echo "  EFI 镜像: ${FINAL_KB} KB"
-
-dd if=/dev/zero of="${EFI_IMG}" bs=1k count="${FINAL_KB}" 2>/dev/null
-mkfs.vfat "${EFI_IMG}" >/dev/null
-
-mmd -i "${EFI_IMG}" ::EFI
-mcopy -s -i "${EFI_IMG}" "${ISO_DIR}/EFI/BOOT" ::EFI
 
 echo "  Phase 5 完成。"
 
