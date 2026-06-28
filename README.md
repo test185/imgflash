@@ -41,12 +41,23 @@
 - **amd64**：UEFI + BIOS 双启动
   - UEFI 链（Secure Boot）：shim（Microsoft 签名）→ GRUB（Debian 签名）→ vmlinuz（Debian 签名）
   - UEFI 链（非 Secure Boot）：GRUB → vmlinuz
-  - BIOS 链：GRUB（core.img）→ vmlinuz
+  - BIOS 链：isolinux（syslinux）→ vmlinuz
 - **arm64**：UEFI 单启动
   - UEFI 链：同 amd64，按 Secure Boot 配置决定
 - **运行时**：
   - TUI 模式：`disktui-lite`（Rust）同时充当 init 和安装器
   - Shell 模式：`init.sh` → `installer.sh`（Bash）
+
+### UEFI 引导布局
+
+ISO 中同时存在三处 GRUB 相关文件，分工如下：
+
+| 路径 | 作用 |
+|------|------|
+| `EFI/BOOT/{BOOTX64,BOOTAA64}.EFI` | 固件 fallback 直接加载的 shim/GRUB 入口 |
+| `EFI/BOOT/grub{aa64,x64}.efi` | Secure Boot 模式下 shim 链式加载的 GRUB |
+| `EFI/debian/grub.cfg` | 唯一真实配置（search + menuentry），匹配 GRUB 硬编码 prefix |
+| `boot/grub/efi.img` | El Torito 启动镜像，内含引导文件 + stub 配置（`configfile /EFI/debian/grub.cfg`） |
 
 ## 安装器模式
 
@@ -57,6 +68,7 @@
 | 界面 | 终端 TUI，键盘导航 | 纯文本菜单，数字选择 |
 | 确认 | 方向键选择 Yes/No | 输入大写 `YES` |
 | 进度条 | 实时进度条 + 速度 + ETA | 文字进度 + 速度 |
+| BusyBox | 预编译独立 applet（`binaries/<ARCH>/busybox_MODPROBE`、`busybox_MOUNT`） | 系统 `busybox-static` |
 | 配置 | `USE_TUI=1` | `USE_TUI=0` |
 
 ## 构建流程
@@ -90,8 +102,30 @@ docker run --rm --privileged \
 # 使用自定义配置构建
 docker run --rm --privileged \
   -v "$(pwd)/output:/build/output" \
-  -v "$(pwd)/my.env:/build/build.env" \
+  -v "$(pwd)/build.env:/build/build.env" \
   imgflash -i /path/to/image.img
+```
+
+### 本地构建（非 Docker）
+
+需在 Debian/Ubuntu 主机上准备以下依赖：
+
+```bash
+apt-get install -y \
+    mmdebstrap debian-archive-keyring \
+    curl file \
+    xorriso squashfs-tools mtools dosfstools syslinux-common isolinux \
+    xz-utils bzip2 p7zip-full unzip zstd cpio kmod \
+    busybox-static
+
+cd disktui-lite
+cargo install --locked cargo-zigbuild
+cargo zigbuild --release --target x86_64-unknown-linux-musl  # 或 aarch64-unknown-linux-musl
+mkdir -p ../binaries
+cp target/x86_64-unknown-linux-musl/release/disktui-lite ../binaries/disktui-lite
+
+cd ..
+./build.sh -i /path/to/image.img
 ```
 
 ### 命令行参数
@@ -100,10 +134,11 @@ docker run --rm --privileged \
 用法: build.sh [选项]
 
 选项:
-  -i, --image   指定本地 .img 文件路径
-  -u, --url     从 URL 下载镜像文件（支持 raw / gz / xz / bz2 / zip / 7z）
-  -n, --name    输出 ISO 名称（默认从镜像文件名推导）
-  -h, --help    显示帮助
+  -i, --image     指定本地 .img 文件路径
+  -u, --url       从 URL 下载镜像文件（支持 raw / gz / xz / bz2 / zip / 7z / tar.gz / tar.xz / tar.bz2 / tar.zst / tgz）
+  -n, --name      输出 ISO 名称（默认从镜像文件名推导）
+  -c, --checksum  SHA256 校验值（可选，下载或本地镜像均生效）
+  -h, --help      显示帮助
 ```
 
 ### 构建配置
@@ -116,7 +151,17 @@ docker run --rm --privileged \
 | `DEBIAN_MIRROR` | Debian 镜像源 | `https://ftp.debian.org/debian` |
 | `DEBIAN_SUITE` | Debian 套件版本 | `trixie` |
 | `VOLUME_LABEL` | ISO 卷标 | `IMGFLASH` |
-| `MOD_*` | 各组内核模块定义 | 见 build.env |
+| `MOD_FILESYSTEM` | 文件系统模块（squashfs / isofs / loop） | 见 build.env |
+| `MOD_NLS` | NLS 字符集模块 | 见 build.env |
+| `MOD_ATA` | ATA/AHCI 控制器模块 | 见 build.env |
+| `MOD_USB` | USB 存储模块（含 UAS） | 见 build.env |
+| `MOD_CDROM` | 光驱 / SCSI 磁盘模块 | 见 build.env |
+| `MOD_INPUT` | 输入设备模块（hid / usbhid） | 见 build.env |
+| `MOD_EMMC` | eMMC 核心模块 | 见 build.env |
+| `MOD_EMMC_CARDREADER` | eMMC 读卡器模块 | 见 build.env |
+| `MOD_EMMC_USB` | USB 外接读卡器模块（默认空） | 见 build.env |
+| `MOD_NVME` | NVMe 模块 | `nvme` |
+| `MOD_VIRT` | 虚拟化模块（virtio 等） | 见 build.env |
 | `INCLUDE_NVME` | NVMe 模块开关 | `1` |
 | `INCLUDE_VIRT` | 虚拟化模块开关 | `1` |
 | `ENABLE_SECURE_BOOT` | Secure Boot 支持 | `0` |
@@ -128,13 +173,14 @@ docker run --rm --privileged \
 
 ## GitHub Actions CI
 
-通过 `workflow_dispatch` 手动触发构建：
+通过 `workflow_dispatch` 手动触发构建。
 
 ### 构建 ISO
 
-1. 进入仓库 Actions 页面
-2. 选择 "构建 ImgFlash 安装器 ISO" 工作流
-3. 填入参数：
+工作流：[`.github/workflows/build.yml`](.github/workflows/build.yml)
+
+1. 进入仓库 Actions 页面，选择 "构建 ImgFlash 安装器 ISO" 工作流
+2. 填入参数：
    - **下载地址**：磁盘镜像 URL
    - **目标架构**：amd64 / arm64
    - **ISO 名称**：可选，默认从 URL 推导
@@ -142,13 +188,24 @@ docker run --rm --privileged \
    - **TUI**：是否使用 TUI 安装器
    - **释放空间**：CI 磁盘空间不足时启用
    - **不使用缓存**：强制重新构建
-4. 构建完成后从 Artifacts 下载 ISO
+   - **SHA256**：可选校验值
+3. 构建完成后从 Artifacts 下载 ISO
 
 ### 发布 ISO
 
-"发布 ISO" 工作流额外支持：
+工作流：[`.github/workflows/publish-iso.yml`](.github/workflows/publish-iso.yml)
+
+在构建 ISO 基础上额外支持：
 - 自动压缩（gz / xz / bz2 / zip / 7z）
-- 创建 GitHub Release 并上传
+- 创建 GitHub Release 并上传（tag 名 `<release_name>-latest`，覆盖旧版）
+
+### 更新 BusyBox 二进制
+
+工作流：[`.github/workflows/update-binaries.yml`](.github/workflows/update-binaries.yml)
+
+为 TUI 模式独立编译 `busybox_MODPROBE` / `busybox_MOUNT` 静态 applet（musl 工具链），并提交到 `binaries/AMD64/` 与 `binaries/ARM64/`：
+- 留空版本号自动检测最新版
+- 指定版本号则使用手动值
 
 ## 安装器运行时
 
