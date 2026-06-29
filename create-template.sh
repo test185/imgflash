@@ -124,10 +124,17 @@ if [[ "${SKIP_BOOTSTRAP}" == "1" ]]; then
     echo "  内核版本：${KVER}"
 
     GRUB_SRC=$(find "${ROOTFS_DIR}" -name "${GRUB_NAME}" 2>/dev/null | head -1)
-    [[ -n "${GRUB_SRC}" ]] || die "复用 rootfs 中未找到 GRUB"
+    if [[ -z "${GRUB_SRC}" ]]; then
+        echo "  未找到 ${GRUB_NAME}，尝试其他路径..."
+        GRUB_SRC=$(find "${ROOTFS_DIR}" -name "grub*.efi*" 2>/dev/null | head -1)
+    fi
+    [[ -n "${GRUB_SRC}" ]] || die "复用 rootfs 中未找到 GRUB EFI 文件"
 
     SHIM_SRC=$(find "${ROOTFS_DIR}" -name "${SHIM_NAME}" 2>/dev/null | head -1)
-    [[ -n "${SHIM_SRC}" ]] || die "复用 rootfs 中未找到 shim"
+    if [[ -z "${SHIM_SRC}" ]]; then
+        SHIM_SRC=$(find "${ROOTFS_DIR}" -name "shim*.efi*" 2>/dev/null | head -1)
+    fi
+    [[ "${SECURE_BOOT}" == "1" && -z "${SHIM_SRC}" ]] && die "复用 rootfs 中未找到 shim"
 else
     sudo rm -rf "${BUILD_DIR}"
     mkdir -p "${BUILD_DIR}"
@@ -152,10 +159,17 @@ else
     echo "  内核版本：${KVER}"
 
     GRUB_SRC=$(find "${ROOTFS_DIR}" -name "${GRUB_NAME}" 2>/dev/null | head -1)
-    [[ -n "${GRUB_SRC}" ]] || die "rootfs 中未找到 GRUB"
+    if [[ -z "${GRUB_SRC}" ]]; then
+        echo "  未找到 ${GRUB_NAME}，尝试其他路径..."
+        GRUB_SRC=$(find "${ROOTFS_DIR}" -name "grub*.efi*" 2>/dev/null | head -1)
+    fi
+    [[ -n "${GRUB_SRC}" ]] || die "rootfs 中未找到 GRUB EFI 文件"
 
     SHIM_SRC=$(find "${ROOTFS_DIR}" -name "${SHIM_NAME}" 2>/dev/null | head -1)
-    [[ -n "${SHIM_SRC}" ]] || die "rootfs 中未找到 shim"
+    if [[ -z "${SHIM_SRC}" ]]; then
+        SHIM_SRC=$(find "${ROOTFS_DIR}" -name "shim*.efi*" 2>/dev/null | head -1)
+    fi
+    [[ "${SECURE_BOOT}" == "1" && -z "${SHIM_SRC}" ]] && die "rootfs 中未找到 shim"
 
     sudo rm -rf "${ROOTFS_DIR}/var/lib/apt/lists"/* \
            "${ROOTFS_DIR}/var/cache/apt"/*
