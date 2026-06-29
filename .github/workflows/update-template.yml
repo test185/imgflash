@@ -1,0 +1,130 @@
+name: "更新构建模板"
+
+on:
+  workflow_dispatch:
+    inputs:
+      amd64:
+        description: 'AMD64 模板'
+        type: boolean
+        default: true
+      amd64_secureboot:
+        description: 'AMD64 Secure Boot 模板'
+        type: boolean
+        default: false
+      arm64:
+        description: 'ARM64 模板'
+        type: boolean
+        default: false
+      arm64_secureboot:
+        description: 'ARM64 Secure Boot 模板'
+        type: boolean
+        default: false
+
+jobs:
+  prepare:
+    name: "准备构建矩阵"
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has_selection: ${{ steps.check.outputs.has_selection }}
+
+    steps:
+      - name: "生成构建矩阵"
+        id: set-matrix
+        run: |
+          MATRIX=$(cat << EOF | jq -c 'map(select(.enable == "true") | del(.enable))'
+          [
+            {"enable": "${{ github.event.inputs.amd64 }}", "arch": "amd64", "secure_boot": false},
+            {"enable": "${{ github.event.inputs.amd64_secureboot }}", "arch": "amd64", "secure_boot": true},
+            {"enable": "${{ github.event.inputs.arm64 }}", "arch": "arm64", "secure_boot": false},
+            {"enable": "${{ github.event.inputs.arm64_secureboot }}", "arch": "arm64", "secure_boot": true}
+          ]
+          EOF
+          )
+          
+          echo "matrix=${MATRIX}" >> $GITHUB_OUTPUT
+          
+      - name: "检查是否有选择"
+        id: check
+        run: |
+          MATRIX='${{ steps.set-matrix.outputs.matrix }}'
+          COUNT=$(echo "$MATRIX" | jq 'length')
+          
+          if [ "$COUNT" -gt 0 ]; then
+            echo "has_selection=true" >> $GITHUB_OUTPUT
+            echo "将构建 $COUNT 个模板"
+          else
+            echo "has_selection=false" >> $GITHUB_OUTPUT
+            echo "未选择任何模板，跳过构建"
+          fi
+
+  build:
+    name: "构建模板 (${{ matrix.arch }}, SB: ${{ matrix.secure_boot }})"
+    needs: prepare
+    if: ${{ needs.prepare.outputs.has_selection == 'true' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    strategy:
+      matrix: 
+        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
+      fail-fast: false
+    permissions:
+      contents: write
+
+    steps:
+      - name: "检出仓库"
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            binaries
+            disktui-lite
+            scripts
+            build.env
+            create-template.sh
+            templates
+
+      - name: "安装 Rust 工具链"
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.arch == 'amd64' && 'x86_64-unknown-linux-musl' || 'aarch64-unknown-linux-musl' }}
+
+      - name: "安装 Zig"
+        uses: mlugg/setup-zig@v2.1.0
+        with:
+          version: master
+
+      - name: "安装 MUSL"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: "Rust 编译缓存"
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: disktui-lite
+
+      - name: "构建 disktui-lite"
+        run: |
+          cd disktui-lite
+          TARGET="${{ matrix.arch == 'amd64' && 'x86_64-unknown-linux-musl' || 'aarch64-unknown-linux-musl' }}"
+          cargo build --release --target "$TARGET"
+          cp target/"$TARGET"/release/disktui-lite ../binaries/
+
+      - name: "创建模板 ISO"
+        run: |
+          SECURE_BOOT_FLAG=""
+          [[ "${{ matrix.secure_boot }}" == "true" ]] && SECURE_BOOT_FLAG="--secure-boot"
+          
+          bash create-template.sh \
+            --arch "${{ matrix.arch }}" \
+            ${SECURE_BOOT_FLAG}
+          
+          ls -lh templates/*.iso
+
+      - name: "提交模板"
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add templates/*.iso
+          git commit -m "更新模板: ${{ matrix.arch }} (SecureBoot: ${{ matrix.secure_boot }})" || echo "模板未变更"
+          git push
