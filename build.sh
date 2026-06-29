@@ -144,11 +144,11 @@ download_image() {
     rm -f "${BUILD_DIR}/downloaded_file"
     [[ -n "${extracted_name}" && -f "${BUILD_DIR}/${extracted_name}" ]] || die "未找到解压后的镜像文件！"
 
-    mv "${BUILD_DIR}/${extracted_name}" "${BUILD_DIR}/temp.img"
+    mv "${BUILD_DIR}/${extracted_name}" "${BUILD_DIR}/image.img"
     ISO_NAME=${ISO_NAME:-$(basename "${extracted_name}" .img)}
 }
 
-# --- CLI 参数解析 ---
+# --- CLI 参数 ---
 IMAGE_PATH=""
 IMAGE_URL=""
 ISO_NAME=""
@@ -197,12 +197,13 @@ echo "  依赖检查通过"
 mkdir -p "${BUILD_DIR}" "${OUTPUT_DIR}"
 
 IMAGE_SRC=""
-[[ -n "${IMAGE_URL}" ]] && { download_image "${IMAGE_URL}" "${SHA256_CHECKSUM}"; IMAGE_SRC="${BUILD_DIR}/temp.img"; }
+[[ -n "${IMAGE_URL}" ]] && { download_image "${IMAGE_URL}" "${SHA256_CHECKSUM}"; IMAGE_SRC="${BUILD_DIR}/image.img"; }
 
 if [[ -n "${IMAGE_PATH}" ]]; then
     [[ -f "${IMAGE_PATH}" ]] || die "找不到镜像文件：${IMAGE_PATH}"
     [[ -n "${SHA256_CHECKSUM}" ]] && { echo "  正在验证本地镜像 SHA256..."; verify_sha256 "${IMAGE_PATH}" "${SHA256_CHECKSUM}" || exit 1; }
-    IMAGE_SRC="${IMAGE_PATH}"
+    cp "${IMAGE_PATH}" "${BUILD_DIR}/image.img"
+    IMAGE_SRC="${BUILD_DIR}/image.img"
     ISO_NAME=${ISO_NAME:-$(basename "${IMAGE_PATH}" .img)}
 fi
 
