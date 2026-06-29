@@ -32,7 +32,7 @@ jobs:
       - name: "生成构建矩阵"
         id: set-matrix
         run: |
-          MATRIX=$(cat << 'EOF' | jq -c 'map(select(.enable == "true") | del(.enable))'
+          MATRIX=$(cat << EOF | jq -c 'map(select(.enable == "true") | del(.enable))'
           [
             {"enable": "${{ github.event.inputs.amd64 }}", "arch": "amd64", "secure_boot": false},
             {"enable": "${{ github.event.inputs.amd64_secureboot }}", "arch": "amd64", "secure_boot": true},
@@ -59,12 +59,13 @@ jobs:
           fi
 
   build:
-    name: "构建模板 (${{ matrix.arch }}${{ matrix.secure_boot && '-secureboot' || '' }})"
+    name: "构建模板 (${{ matrix.arch }}, SB: ${{ matrix.secure_boot }})"
     needs: prepare
     if: ${{ needs.prepare.outputs.has_selection == 'true' }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     strategy:
-      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+      matrix: 
+        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
       fail-fast: false
     permissions:
       contents: write
@@ -125,5 +126,5 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
           git add templates/*.iso
-          git commit -m "更新模板: ${{ matrix.arch }}${{ matrix.secure_boot && '-secureboot' || '' }}" || echo "模板未变更"
+          git commit -m "更新模板: ${{ matrix.arch }} (SecureBoot: ${{ matrix.secure_boot }})" || echo "模板未变更"
           git push
