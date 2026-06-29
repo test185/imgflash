@@ -50,7 +50,7 @@ LDLINUX_C32=$(find /usr -name ldlinux.c32 2>/dev/null | head -1)
 ISOHDPFX_PATH=$(find /usr -name isohdpfx.bin 2>/dev/null | head -1)
 
 # --- 构建目录 ---
-BUILD_DIR="${SCRIPT_DIR}/build"
+BUILD_DIR="${SCRIPT_DIR}/build/full"
 ROOTFS_DIR="${BUILD_DIR}/rootfs"
 INITRAMFS_DIR="${BUILD_DIR}/initramfs"
 ISO_DIR="${BUILD_DIR}/iso"
@@ -166,7 +166,7 @@ ImgFlash - 纯 initramfs ISO 构建器
   -u, --url      从 URL 下载镜像文件
   -n, --name     输出 ISO 名称（默认从镜像文件名推导）
   -c, --checksum SHA256 校验值（可选）
-  --no-cache     强制完整构建
+  --no-cache     强制完整构建（已废弃，此脚本仅用于完整构建）
   -h, --help     显示此帮助
 EOF
 }

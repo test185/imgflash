@@ -13,5 +13,3 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /build
 
 COPY . .
-
-ENTRYPOINT ["bash", "build.sh"]
