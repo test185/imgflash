@@ -53,21 +53,21 @@ jobs:
       contents: write
 
     steps:
-      - name: "检出仓库"
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
           sparse-checkout: |
+            Dockerfile
+            .dockerignore
             binaries
             disktui-lite
-            scripts
             build.env
             create-template.sh
             templates
 
-      - name: "安装依赖"
+      - name: "安装编译工具链"
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools mmdebstrap xorriso mtools dosfstools debian-archive-keyring
+          sudo apt-get install -y musl-tools
 
       - name: "安装 Rust 工具链"
         uses: dtolnay/rust-toolchain@stable
@@ -88,8 +88,20 @@ jobs:
         run: |
           cd disktui-lite
           TARGET="${{ matrix.arch == 'amd64' && 'x86_64-unknown-linux-musl' || 'aarch64-unknown-linux-musl' }}"
-          cargo build --release --target "$TARGET"
+          cargo install --locked cargo-zigbuild
+          cargo zigbuild --release --target "$TARGET"
           cp target/"$TARGET"/release/disktui-lite ../binaries/
+
+      - name: "设置 Docker Buildx"
+        uses: docker/setup-buildx-action@v4
+
+      - name: "构建 Docker 镜像"
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: imgflash:latest
 
       - name: "构建模板"
         run: |
@@ -104,13 +116,24 @@ jobs:
             exit 0
           fi
           
+          BUILD_DIR_HOST="$(pwd)/build/${{ matrix.arch }}"
+          mkdir -p "${BUILD_DIR_HOST}"
+          
           FIRST=1
           for variant in "${VARIANTS[@]}"; do
             echo ""; echo ">>> 构建 ${{ matrix.arch }}${variant}-template"
             ARGS=(--arch "${{ matrix.arch }}")
             [[ "$variant" == "secureboot" ]] && ARGS+=(--secure-boot)
             [[ "$FIRST" -eq 0 ]] && ARGS+=(--skip-bootstrap)
-            bash create-template.sh "${ARGS[@]}"
+            
+            docker run --rm --privileged \
+              -v "$(pwd)/binaries:/build/binaries" \
+              -v "$(pwd)/templates:/build/templates" \
+              -v "${BUILD_DIR_HOST}:/build/build/${{ matrix.arch }}" \
+              -v "$(pwd)/build.env:/build/build.env" \
+              --entrypoint bash \
+              imgflash bash create-template.sh "${ARGS[@]}"
+            
             FIRST=0
           done
 

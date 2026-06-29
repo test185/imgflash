@@ -13,7 +13,6 @@ source "${ENV_FILE}"
 die() { echo "错误：$*" >&2; exit 1; }
 
 # --- CLI 参数 ---
-ARCH="${ARCH:-amd64}"
 SECURE_BOOT="${ENABLE_SECURE_BOOT:-0}"
 OUTPUT_NAME=""
 SKIP_BOOTSTRAP=0
@@ -97,7 +96,7 @@ ISO_DIR="${BUILD_DIR}/iso"
 # --- 退出清理 ---
 BUILD_SUCCESS=0
 cleanup() {
-    [[ "${BUILD_SUCCESS}" -eq 0 && -d "${BUILD_DIR}" ]] && { echo "清理构建目录..."; sudo rm -rf "${BUILD_DIR}"; }
+    [[ "${BUILD_SUCCESS}" -eq 0 && -d "${BUILD_DIR}" ]] && { echo "清理构建目录..."; rm -rf "${BUILD_DIR}"; }
     :
 }
 trap cleanup EXIT
@@ -123,26 +122,27 @@ if [[ "${SKIP_BOOTSTRAP}" == "1" ]]; then
     KVER=$(basename "${VMLINUZ}" | sed 's/^vmlinuz-//')
     echo "  内核版本：${KVER}"
 
-    GRUB_SRC=$(find "${ROOTFS_DIR}" -name "${GRUB_NAME}" 2>/dev/null | head -1)
+    GRUB_SRC=$(find "${ROOTFS_DIR}" -name "${GRUB_NAME}" -print -quit 2>/dev/null)
     if [[ -z "${GRUB_SRC}" ]]; then
         echo "  未找到 ${GRUB_NAME}，尝试其他路径..."
-        GRUB_SRC=$(find "${ROOTFS_DIR}" -name "grub*.efi*" 2>/dev/null | head -1)
+        GRUB_SRC=$(find "${ROOTFS_DIR}" -name "grub*.efi*" -print -quit 2>/dev/null)
     fi
     [[ -n "${GRUB_SRC}" ]] || die "复用 rootfs 中未找到 GRUB EFI 文件"
 
-    SHIM_SRC=$(find "${ROOTFS_DIR}" -name "${SHIM_NAME}" 2>/dev/null | head -1)
+    SHIM_SRC=$(find "${ROOTFS_DIR}" -name "${SHIM_NAME}" -print -quit 2>/dev/null)
     if [[ -z "${SHIM_SRC}" ]]; then
-        SHIM_SRC=$(find "${ROOTFS_DIR}" -name "shim*.efi*" 2>/dev/null | head -1)
+        SHIM_SRC=$(find "${ROOTFS_DIR}" -name "shim*.efi*" -print -quit 2>/dev/null)
     fi
     [[ "${SECURE_BOOT}" == "1" && -z "${SHIM_SRC}" ]] && die "复用 rootfs 中未找到 shim"
 else
-    sudo rm -rf "${BUILD_DIR}"
+    rm -rf "${BUILD_DIR}"
     mkdir -p "${BUILD_DIR}"
 
-    SIGNED_PKGS="${KERNEL_PKG},${SHIM_PKG},${GRUB_PKG}"
+    SIGNED_PKGS="${KERNEL_PKG},${GRUB_PKG}"
+    [[ "${SECURE_BOOT}" == "1" ]] && SIGNED_PKGS="${KERNEL_PKG},${SHIM_PKG},${GRUB_PKG}"
 
     echo "[Phase 1] mmdebstrap ${DEBIAN_SUITE} (${ARCH}) ..."
-    sudo mmdebstrap --variant=essential \
+    mmdebstrap --variant=essential \
         --keyring=/usr/share/keyrings/debian-archive-keyring.gpg \
         --include="${SIGNED_PKGS}" \
         "${DEBIAN_SUITE}" "${ROOTFS_DIR}" "${DEBIAN_MIRROR}"
@@ -158,20 +158,20 @@ else
     KVER=$(basename "${VMLINUZ}" | sed 's/^vmlinuz-//')
     echo "  内核版本：${KVER}"
 
-    GRUB_SRC=$(find "${ROOTFS_DIR}" -name "${GRUB_NAME}" 2>/dev/null | head -1)
+    GRUB_SRC=$(find "${ROOTFS_DIR}" -name "${GRUB_NAME}" -print -quit 2>/dev/null)
     if [[ -z "${GRUB_SRC}" ]]; then
         echo "  未找到 ${GRUB_NAME}，尝试其他路径..."
-        GRUB_SRC=$(find "${ROOTFS_DIR}" -name "grub*.efi*" 2>/dev/null | head -1)
+        GRUB_SRC=$(find "${ROOTFS_DIR}" -name "grub*.efi*" -print -quit 2>/dev/null)
     fi
     [[ -n "${GRUB_SRC}" ]] || die "rootfs 中未找到 GRUB EFI 文件"
 
-    SHIM_SRC=$(find "${ROOTFS_DIR}" -name "${SHIM_NAME}" 2>/dev/null | head -1)
+    SHIM_SRC=$(find "${ROOTFS_DIR}" -name "${SHIM_NAME}" -print -quit 2>/dev/null)
     if [[ -z "${SHIM_SRC}" ]]; then
-        SHIM_SRC=$(find "${ROOTFS_DIR}" -name "shim*.efi*" 2>/dev/null | head -1)
+        SHIM_SRC=$(find "${ROOTFS_DIR}" -name "shim*.efi*" -print -quit 2>/dev/null)
     fi
     [[ "${SECURE_BOOT}" == "1" && -z "${SHIM_SRC}" ]] && die "rootfs 中未找到 shim"
 
-    sudo rm -rf "${ROOTFS_DIR}/var/lib/apt/lists"/* \
+    rm -rf "${ROOTFS_DIR}/var/lib/apt/lists"/* \
            "${ROOTFS_DIR}/var/cache/apt"/*
 
     echo "  Phase 2 完成。"
@@ -238,7 +238,7 @@ for f in modules.builtin modules.builtin.modinfo; do
     [ -f "${MOD_SRC}/$f" ] && cp "${MOD_SRC}/$f" "${MOD_DEST}/"
 done
 
-[[ "${SKIP_BOOTSTRAP}" == "1" ]] && sudo rm -rf "${ROOTFS_DIR}"
+[[ "${SKIP_BOOTSTRAP}" == "1" ]] && rm -rf "${ROOTFS_DIR}"
 depmod -b "${INITRAMFS_DIR}" "${KVER}"
 
 MOD_COUNT=$(find "${INITRAMFS_DIR}/lib/modules" -name '*.ko' | wc -l)
@@ -276,14 +276,16 @@ else
 fi
 
 # GRUB 配置（不含用户镜像）
+TIMEOUT_STYLE=$([[ "${BOOT_TIMEOUT}" -eq 0 ]] && echo "hidden" || echo "menu")
+
 cat > "${ISO_DIR}/EFI/debian/grub.cfg" << EOF
 search --no-floppy --label --set=root ${VOLUME_LABEL}
-set timeout=0
-set timeout_style=hidden
+set timeout=${BOOT_TIMEOUT}
+set timeout_style=${TIMEOUT_STYLE}
 set default=0
 
 menuentry "ImgFlash" {
-    linux /boot/vmlinuz quiet
+    linux /boot/vmlinuz ${KERNEL_PARAMS}
     initrd /boot/initrd.img
 }
 EOF
@@ -316,6 +318,7 @@ echo "  生成模板 ISO ..."
 xorriso -as mkisofs \
     -iso-level 3 \
     -o "${FINAL_ISO}" \
+    -full-iso9660-filenames \
     -volid "${VOLUME_LABEL}" \
     -e boot/grub/efi.img \
     -no-emul-boot \

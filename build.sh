@@ -113,32 +113,32 @@ download_image() {
     esac
 
     if [[ -z "${extracted_name}" ]]; then
-    case "${file_type}" in
-        application/gzip)
-            extracted_name=$(basename "$url" | sed 's/\.gz$//')
-            gunzip -c "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
-            ;;
-        application/x-xz)
-            extracted_name=$(basename "$url" | sed 's/\.xz$//')
-            xz -dc "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
-            ;;
-        application/x-bzip2)
-            extracted_name=$(basename "$url" | sed 's/\.bz2$//')
-            bzip2 -dc "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
-            ;;
-        application/zip)
-            unzip -j -o "${BUILD_DIR}/downloaded_file" -d "${BUILD_DIR}/"
-            extracted_name=$(ls "${BUILD_DIR}"/*.img 2>/dev/null | head -n1 | xargs basename)
-            ;;
-        application/x-7z-compressed)
-            7z x "${BUILD_DIR}/downloaded_file" -o"${BUILD_DIR}/"
-            extracted_name=$(ls "${BUILD_DIR}"/*.img 2>/dev/null | head -n1 | xargs basename)
-            ;;
-        *)
-            extracted_name=$(basename "$url")
-            mv "${BUILD_DIR}/downloaded_file" "${BUILD_DIR}/${extracted_name}"
-            ;;
-    esac
+        case "${file_type}" in
+            application/gzip)
+                extracted_name=$(basename "$url" | sed 's/\.gz$//')
+                gunzip -c "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
+                ;;
+            application/x-xz)
+                extracted_name=$(basename "$url" | sed 's/\.xz$//')
+                xz -dc "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
+                ;;
+            application/x-bzip2)
+                extracted_name=$(basename "$url" | sed 's/\.bz2$//')
+                bzip2 -dc "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
+                ;;
+            application/zip)
+                unzip -j -o "${BUILD_DIR}/downloaded_file" -d "${BUILD_DIR}/"
+                extracted_name=$(ls "${BUILD_DIR}"/*.img 2>/dev/null | head -n1 | xargs basename)
+                ;;
+            application/x-7z-compressed)
+                7z x "${BUILD_DIR}/downloaded_file" -o"${BUILD_DIR}/"
+                extracted_name=$(ls "${BUILD_DIR}"/*.img 2>/dev/null | head -n1 | xargs basename)
+                ;;
+            *)
+                extracted_name=$(basename "$url")
+                mv "${BUILD_DIR}/downloaded_file" "${BUILD_DIR}/${extracted_name}"
+                ;;
+        esac
     fi
 
     rm -f "${BUILD_DIR}/downloaded_file"
@@ -267,18 +267,16 @@ if [[ "${USE_TUI}" == "1" ]]; then
     cp "${SCRIPT_DIR}/binaries/${ARCH_DIR}/busybox_MODPROBE"  "${INITRAMFS_DIR}/sbin/modprobe"
     cp "${SCRIPT_DIR}/binaries/${ARCH_DIR}/busybox_MOUNT"     "${INITRAMFS_DIR}/bin/mount"
     chmod +x "${INITRAMFS_DIR}/sbin/modprobe" "${INITRAMFS_DIR}/bin/mount"
-else
-    cp /bin/busybox "${INITRAMFS_DIR}/bin/busybox"
-    chmod +x "${INITRAMFS_DIR}/bin/busybox"
-    ln -s busybox "${INITRAMFS_DIR}/bin/sh"
-fi
 
-if [[ "${USE_TUI}" == "1" ]]; then
     [[ -f "${SCRIPT_DIR}/binaries/disktui-lite" ]] || die "找不到 disktui-lite，请先构建"
     cp "${SCRIPT_DIR}/binaries/disktui-lite" "${INITRAMFS_DIR}/usr/bin/disktui-lite"
     chmod +x "${INITRAMFS_DIR}/usr/bin/disktui-lite"
     ln -s /usr/bin/disktui-lite "${INITRAMFS_DIR}/init"
 else
+    cp /bin/busybox "${INITRAMFS_DIR}/bin/busybox"
+    chmod +x "${INITRAMFS_DIR}/bin/busybox"
+    ln -s busybox "${INITRAMFS_DIR}/bin/sh"
+
     cp "${SCRIPT_DIR}/scripts/init.sh" "${INITRAMFS_DIR}/init"
     chmod +x "${INITRAMFS_DIR}/init"
     sed -i "s/TRIES -lt 10/TRIES -lt ${SCAN_TIMEOUT}/" "${INITRAMFS_DIR}/init"

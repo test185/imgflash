@@ -61,32 +61,32 @@ download_image() {
     esac
 
     if [[ -z "${extracted_name}" ]]; then
-    case "${file_type}" in
-        application/gzip)
-            extracted_name=$(basename "$url" | sed 's/\.gz$//')
-            gunzip -c "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
-            ;;
-        application/x-xz)
-            extracted_name=$(basename "$url" | sed 's/\.xz$//')
-            xz -dc "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
-            ;;
-        application/x-bzip2)
-            extracted_name=$(basename "$url" | sed 's/\.bz2$//')
-            bzip2 -dc "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
-            ;;
-        application/zip)
-            unzip -j -o "${BUILD_DIR}/downloaded_file" -d "${BUILD_DIR}/"
-            extracted_name=$(ls "${BUILD_DIR}"/*.img 2>/dev/null | head -n1 | xargs basename)
-            ;;
-        application/x-7z-compressed)
-            7z x "${BUILD_DIR}/downloaded_file" -o"${BUILD_DIR}/"
-            extracted_name=$(ls "${BUILD_DIR}"/*.img 2>/dev/null | head -n1 | xargs basename)
-            ;;
-        *)
-            extracted_name=$(basename "$url")
-            mv "${BUILD_DIR}/downloaded_file" "${BUILD_DIR}/${extracted_name}"
-            ;;
-    esac
+        case "${file_type}" in
+            application/gzip)
+                extracted_name=$(basename "$url" | sed 's/\.gz$//')
+                gunzip -c "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
+                ;;
+            application/x-xz)
+                extracted_name=$(basename "$url" | sed 's/\.xz$//')
+                xz -dc "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
+                ;;
+            application/x-bzip2)
+                extracted_name=$(basename "$url" | sed 's/\.bz2$//')
+                bzip2 -dc "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
+                ;;
+            application/zip)
+                unzip -j -o "${BUILD_DIR}/downloaded_file" -d "${BUILD_DIR}/"
+                extracted_name=$(ls "${BUILD_DIR}"/*.img 2>/dev/null | head -n1 | xargs basename)
+                ;;
+            application/x-7z-compressed)
+                7z x "${BUILD_DIR}/downloaded_file" -o"${BUILD_DIR}/"
+                extracted_name=$(ls "${BUILD_DIR}"/*.img 2>/dev/null | head -n1 | xargs basename)
+                ;;
+            *)
+                extracted_name=$(basename "$url")
+                mv "${BUILD_DIR}/downloaded_file" "${BUILD_DIR}/${extracted_name}"
+                ;;
+        esac
     fi
 
     rm -f "${BUILD_DIR}/downloaded_file"
@@ -102,7 +102,6 @@ IMAGE_PATH=""
 IMAGE_URL=""
 SHA256_CHECKSUM=""
 OUTPUT_NAME=""
-VOLUME_LABEL="${VOLUME_LABEL:-IMGFLASH}"
 
 show_help() {
     cat <<EOF
@@ -172,7 +171,6 @@ fi
 
 # --- 自动选择模板 ---
 if [[ -z "${TEMPLATE_PATH}" ]]; then
-    ARCH="${ARCH:-amd64}"
     SECURE_BOOT="${ENABLE_SECURE_BOOT:-0}"
     
     TEMPLATE_NAME="${ARCH}-template.iso"
