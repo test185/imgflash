@@ -196,12 +196,13 @@ echo "  依赖检查通过"
 # --- 确定输入镜像 ---
 mkdir -p "${BUILD_DIR}" "${OUTPUT_DIR}"
 
-[[ -n "${IMAGE_URL}" ]] && download_image "${IMAGE_URL}" "${SHA256_CHECKSUM}"
+IMAGE_SRC=""
+[[ -n "${IMAGE_URL}" ]] && { download_image "${IMAGE_URL}" "${SHA256_CHECKSUM}"; IMAGE_SRC="${BUILD_DIR}/temp.img"; }
 
 if [[ -n "${IMAGE_PATH}" ]]; then
     [[ -f "${IMAGE_PATH}" ]] || die "找不到镜像文件：${IMAGE_PATH}"
     [[ -n "${SHA256_CHECKSUM}" ]] && { echo "  正在验证本地镜像 SHA256..."; verify_sha256 "${IMAGE_PATH}" "${SHA256_CHECKSUM}" || exit 1; }
-    cp "${IMAGE_PATH}" "${BUILD_DIR}/temp.img"
+    IMAGE_SRC="${IMAGE_PATH}"
     ISO_NAME=${ISO_NAME:-$(basename "${IMAGE_PATH}" .img)}
 fi
 
@@ -351,17 +352,14 @@ echo "  Phase 3 完成。"
 # =============================================================================
 echo ""; echo "[Phase 4] 打包镜像容器 ..."
 
-mv "${BUILD_DIR}/temp.img" "${BUILD_DIR}/image.img"
-fallocate --dig-holes "${BUILD_DIR}/image.img" 2>/dev/null || true
-echo "  原始镜像大小：$(ls -lh "${BUILD_DIR}/image.img" | awk '{print $5}')"
+echo "  原始镜像大小：$(ls -lh "${IMAGE_SRC}" | awk '{print $5}')"
 
 echo "  创建 squashfs（zstd）..."
-mksquashfs "${BUILD_DIR}/image.img" "${BUILD_DIR}/image.squashfs" \
+mksquashfs "${IMAGE_SRC}" "${BUILD_DIR}/image.squashfs" \
     -b 1M -comp zstd -Xcompression-level ${ZSTD_LEVEL} \
     -no-fragments -no-duplicates -no-progress -no-xattrs
 
 echo "  Squashfs 大小：$(ls -lh "${BUILD_DIR}/image.squashfs" | awk '{print $5}')"
-rm -f "${BUILD_DIR}/image.img"
 echo "  Phase 4 完成。"
 
 # =============================================================================

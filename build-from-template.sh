@@ -205,17 +205,14 @@ echo "=========================================="; echo ""
 # =============================================================================
 echo "[Phase 1] 打包用户镜像 ..."
 
-cp "${IMAGE_PATH}" "${BUILD_DIR}/image.img"
-fallocate --dig-holes "${BUILD_DIR}/image.img" 2>/dev/null || true
-echo "  原始镜像大小：$(ls -lh "${BUILD_DIR}/image.img" | awk '{print $5}')"
+echo "  原始镜像大小：$(ls -lh "${IMAGE_PATH}" | awk '{print $5}')"
 
 echo "  创建 squashfs（zstd）..."
-mksquashfs "${BUILD_DIR}/image.img" "${BUILD_DIR}/image.squashfs" \
+mksquashfs "${IMAGE_PATH}" "${BUILD_DIR}/image.squashfs" \
     -b 1M -comp zstd -Xcompression-level ${ZSTD_LEVEL} \
     -no-fragments -no-duplicates -no-progress -no-xattrs
 
 echo "  Squashfs 大小：$(ls -lh "${BUILD_DIR}/image.squashfs" | awk '{print $5}')"
-rm -f "${BUILD_DIR}/image.img"
 echo "  Phase 1 完成。"
 
 # =============================================================================
