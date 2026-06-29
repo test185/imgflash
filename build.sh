@@ -153,6 +153,7 @@ IMAGE_PATH=""
 IMAGE_URL=""
 ISO_NAME=""
 SHA256_CHECKSUM=""
+NO_CACHE=""
 
 show_help() {
     cat <<EOF
@@ -165,6 +166,7 @@ ImgFlash - 纯 initramfs ISO 构建器
   -u, --url      从 URL 下载镜像文件
   -n, --name     输出 ISO 名称（默认从镜像文件名推导）
   -c, --checksum SHA256 校验值（可选）
+  --no-cache     强制完整构建（已废弃，此脚本仅用于完整构建）
   -h, --help     显示此帮助
 EOF
 }
@@ -175,6 +177,7 @@ while [[ $# -gt 0 ]]; do
         -n|--name)  ISO_NAME="$2"; shift 2 ;;
         -u|--url)   IMAGE_URL="$2"; shift 2 ;;
         -c|--checksum) SHA256_CHECKSUM="$2"; shift 2 ;;
+        --no-cache) NO_CACHE="1"; shift ;;
         -h|--help)  show_help; exit 0 ;;
         *) echo "未知选项: $1"; show_help; exit 1 ;;
     esac
@@ -432,8 +435,14 @@ mkdir -p "${ISO_DIR}/boot/grub"
 EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
 EFI_FILES="${GRUB_SRC}"
 [[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && EFI_FILES="${SHIM_SRC} ${GRUB_SRC}"
-EFI_SIZE_KB=$(( $(du -skL ${EFI_FILES} 2>/dev/null | awk '{s+=$1} END {print s}') + 580 ))
-echo "  EFI 镜像: ${EFI_SIZE_KB} KB"
+
+# 动态计算FAT镜像大小
+FILE_SIZE_KB=$(du -skL ${EFI_FILES} 2>/dev/null | awk '{s+=$1} END {print s}')
+FILE_COUNT=$(echo "${EFI_FILES}" | wc -w)
+FAT_OVERHEAD=80
+DIR_ENTRIES=$((FILE_COUNT * 4))
+EFI_SIZE_KB=$((FILE_SIZE_KB + FAT_OVERHEAD + DIR_ENTRIES + 20))
+echo "  EFI 镜像: ${EFI_SIZE_KB} KB (${FILE_COUNT} 个文件, ${FILE_SIZE_KB}KB)"
 
 dd if=/dev/zero of="${EFI_IMG}" bs=1k count="${EFI_SIZE_KB}" 2>/dev/null
 mkfs.vfat "${EFI_IMG}" >/dev/null

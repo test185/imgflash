@@ -71,14 +71,6 @@ jobs:
 
       - name: "检出仓库"
         uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            binaries
-            disktui-lite
-            build.sh
-            scripts
-            build.env
-            Dockerfile
 
       - name: "安装 Rust 工具链"
         if: ${{ github.event.inputs.use_tui == 'true' }}
@@ -148,17 +140,49 @@ jobs:
           cache-to: type=gha,mode=max
           no-cache: ${{ github.event.inputs.no_cache == 'true' }}
 
-      - name: "构建 ISO"
+      - name: "检查模板是否存在"
+        id: check_template
         run: |
-          mkdir -p output binaries
-          ARGS="-u ${{ github.event.inputs.download_url }}"
-          if [ -n "${{ github.event.inputs.sha256 }}" ]; then
-            ARGS="$ARGS -c ${{ github.event.inputs.sha256 }}"
+          TEMPLATE_NAME="${{ github.event.inputs.arch }}-template.iso"
+          [[ "${{ github.event.inputs.secure_boot }}" == "true" ]] && TEMPLATE_NAME="${{ github.event.inputs.arch }}-secureboot-template.iso"
+          
+          if [ -f "templates/${TEMPLATE_NAME}" ]; then
+            echo "模板存在：${TEMPLATE_NAME}"
+            echo "template_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "模板不存在：${TEMPLATE_NAME}"
+            echo "template_exists=false" >> $GITHUB_OUTPUT
           fi
+
+      - name: "从模板快速构建"
+        if: ${{ steps.check_template.outputs.template_exists == 'true' && github.event.inputs.no_cache != 'true' }}
+        env:
+          ARCH: ${{ github.event.inputs.arch }}
+          ENABLE_SECURE_BOOT: ${{ github.event.inputs.secure_boot && '1' || '0' }}
+        run: |
+          ARGS="-u ${{ github.event.inputs.download_url }}"
+          [ -n "${{ github.event.inputs.sha256 }}" ] && ARGS="$ARGS -c ${{ github.event.inputs.sha256 }}"
+          
+          docker run --rm --privileged \
+            -v "$(pwd)/build:/build/build" \
+            -v "$(pwd)/output:/build/output" \
+            -v "$(pwd)/templates:/build/templates" \
+            -v "$(pwd)/build.env:/build/build.env" \
+            -e ARCH="${ARCH}" \
+            -e ENABLE_SECURE_BOOT="${ENABLE_SECURE_BOOT}" \
+            imgflash bash build-from-template.sh ${ARGS}
+
+      - name: "完整构建（无模板或强制）"
+        if: ${{ steps.check_template.outputs.template_exists != 'true' || github.event.inputs.no_cache == 'true' }}
+        run: |
+          ARGS="-u ${{ github.event.inputs.download_url }}"
+          [ -n "${{ github.event.inputs.sha256 }}" ] && ARGS="$ARGS -c ${{ github.event.inputs.sha256 }}"
+          
           docker run --rm --privileged \
             -v "$(pwd)/binaries:/build/binaries" \
             -v "$(pwd)/output:/build/output" \
-            imgflash $ARGS
+            -v "$(pwd)/templates:/build/templates" \
+            imgflash ${ARGS}
 
       - name: "获取 ISO 文件名"
         id: iso_file
