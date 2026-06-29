@@ -79,7 +79,7 @@ case "${ARCH}" in
         ;;
     arm64)
         KERNEL_PKG="linux-image-arm64"
-        SHIM_PKG="shim-aa64-signed"
+        SHIM_PKG="shim-signed"
         GRUB_PKG="grub-efi-arm64-signed"
         SHIM_NAME="shimaa64.efi.signed"
         GRUB_NAME="grubaa64.efi.signed"
