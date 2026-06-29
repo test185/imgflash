@@ -202,7 +202,7 @@ IMAGE_SRC=""
 if [[ -n "${IMAGE_PATH}" ]]; then
     [[ -f "${IMAGE_PATH}" ]] || die "找不到镜像文件：${IMAGE_PATH}"
     [[ -n "${SHA256_CHECKSUM}" ]] && { echo "  正在验证本地镜像 SHA256..."; verify_sha256 "${IMAGE_PATH}" "${SHA256_CHECKSUM}" || exit 1; }
-    cp "${IMAGE_PATH}" "${BUILD_DIR}/image.img"
+    ln -f "${IMAGE_PATH}" "${BUILD_DIR}/image.img"
     IMAGE_SRC="${BUILD_DIR}/image.img"
     ISO_NAME=${ISO_NAME:-$(basename "${IMAGE_PATH}" .img)}
 fi
