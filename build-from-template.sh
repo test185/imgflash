@@ -231,6 +231,7 @@ xorriso -indev "${TEMPLATE_PATH}" \
     -outdev "${FINAL_ISO}" \
     -map "${BUILD_DIR}/image.squashfs" /image.squashfs \
     -volid "${VOLUME_LABEL}" \
+    -boot_image any replay \
     -commit
 
 rm -rf "${BUILD_DIR}"
