@@ -34,16 +34,17 @@ jobs:
         run: |
           MATRIX="[]"
           
-          for combo in "amd64:false" "amd64:true" "arm64:false" "arm64:true"; do
-            arch="${combo%%:*}"
-            secure="${combo##*:}"
-            
-            input_var="${arch}"
-            [[ "${secure}" == "true" ]] && input_var="${arch}_secureboot"
-            
-            if [ "${{ github.event.inputs.${input_var} }}" == "true" ]; then
-              MATRIX=$(echo "$MATRIX" | jq -c --arg arch "$arch" --argjson secure "$secure" \
-                '. + [{arch: $arch, secure_boot: $secure}]')
+          ITEMS=(
+            "${{ github.event.inputs.amd64 }}|amd64|false"
+            "${{ github.event.inputs.amd64_secureboot }}|amd64|true"
+            "${{ github.event.inputs.arm64 }}|arm64|false"
+            "${{ github.event.inputs.arm64_secureboot }}|arm64|true"
+          )
+          
+          for item in "${ITEMS[@]}"; do
+            IFS='|' read -r enabled arch sb <<< "$item"
+            if [ "$enabled" == "true" ]; then
+              MATRIX=$(echo "$MATRIX" | jq -c --arg a "$arch" --argjson s "$sb" '. + [{arch: $a, secure_boot: $s}]')
             fi
           done
           
