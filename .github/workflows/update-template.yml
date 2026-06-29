@@ -116,25 +116,16 @@ jobs:
             exit 0
           fi
           
-          BUILD_DIR_HOST="$(pwd)/build/${{ matrix.arch }}"
-          mkdir -p "${BUILD_DIR_HOST}"
-          
-          FIRST=1
           for variant in "${VARIANTS[@]}"; do
             echo ""; echo ">>> 构建 ${{ matrix.arch }}${variant}-template"
             ARGS=(--arch "${{ matrix.arch }}")
             [[ "$variant" == "secureboot" ]] && ARGS+=(--secure-boot)
-            [[ "$FIRST" -eq 0 ]] && ARGS+=(--skip-bootstrap)
             
             docker run --rm --privileged \
               -v "$(pwd)/binaries:/build/binaries" \
               -v "$(pwd)/templates:/build/templates" \
-              -v "${BUILD_DIR_HOST}:/build/build/${{ matrix.arch }}" \
               -v "$(pwd)/build.env:/build/build.env" \
-              --entrypoint bash \
               imgflash create-template.sh "${ARGS[@]}"
-            
-            FIRST=0
           done
 
       - name: "提交模板"
