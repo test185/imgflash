@@ -147,7 +147,7 @@ done
 [[ -n "${IMAGE_URL}" || -n "${IMAGE_PATH}" ]] || die "必须提供镜像路径 (-i) 或下载 URL (-u)"
 
 # --- 构建目录 ---
-BUILD_DIR="${SCRIPT_DIR}/build"
+BUILD_DIR="${SCRIPT_DIR}/build/template"
 OUTPUT_DIR="${SCRIPT_DIR}/output"
 
 # --- 退出清理 ---

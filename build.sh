@@ -50,7 +50,7 @@ LDLINUX_C32=$(find /usr -name ldlinux.c32 2>/dev/null | head -1)
 ISOHDPFX_PATH=$(find /usr -name isohdpfx.bin 2>/dev/null | head -1)
 
 # --- 构建目录 ---
-BUILD_DIR="${SCRIPT_DIR}/build"
+BUILD_DIR="${SCRIPT_DIR}/build/full"
 ROOTFS_DIR="${BUILD_DIR}/rootfs"
 INITRAMFS_DIR="${BUILD_DIR}/initramfs"
 ISO_DIR="${BUILD_DIR}/iso"
