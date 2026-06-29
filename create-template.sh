@@ -16,6 +16,7 @@ die() { echo "错误：$*" >&2; exit 1; }
 ARCH="${ARCH:-amd64}"
 SECURE_BOOT="${ENABLE_SECURE_BOOT:-0}"
 OUTPUT_NAME=""
+SKIP_BOOTSTRAP=0
 
 show_help() {
     cat <<EOF
@@ -26,6 +27,7 @@ ImgFlash - 创建构建模板
 选项:
   --arch          目标架构（amd64/arm64，默认 amd64）
   --secure-boot   启用 Secure Boot（默认禁用）
+  --skip-bootstrap  跳过 Phase 1-2，复用已有 boot cache
   -o, --output    输出模板名称（不含 .iso 后缀）
   -h, --help      显示此帮助
 
@@ -48,6 +50,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --arch) ARCH="$2"; shift 2 ;;
         --secure-boot) SECURE_BOOT="1"; shift ;;
+        --skip-bootstrap) SKIP_BOOTSTRAP=1; shift ;;
         -o|--output) OUTPUT_NAME="$2"; shift 2 ;;
         -h|--help) show_help; exit 0 ;;
         *) echo "未知选项: $1"; show_help; exit 1 ;;
@@ -86,7 +89,7 @@ case "${ARCH}" in
 esac
 
 # --- 构建目录 ---
-BUILD_DIR="${SCRIPT_DIR}/build"
+BUILD_DIR="${SCRIPT_DIR}/build/${ARCH}"
 ROOTFS_DIR="${BUILD_DIR}/rootfs"
 INITRAMFS_DIR="${BUILD_DIR}/initramfs"
 ISO_DIR="${BUILD_DIR}/iso"
@@ -108,41 +111,56 @@ echo "  输出      : ${OUTPUT_NAME}.iso"
 echo "=========================================="; echo ""
 
 # =============================================================================
-# Phase 1: mmdebstrap 创建最小 Debian 环境
+# Phase 1-2: 创建 rootfs 并提取组件
 # =============================================================================
-rm -rf "${ROOTFS_DIR}"
-mkdir -p "${BUILD_DIR}"
 
-SIGNED_PKGS="${KERNEL_PKG},${GRUB_PKG}"
-[[ "${SECURE_BOOT}" == "1" ]] && SIGNED_PKGS="${KERNEL_PKG},${SHIM_PKG},${GRUB_PKG}"
+if [[ "${SKIP_BOOTSTRAP}" == "1" ]]; then
+    echo "[跳过] Phase 1-2：复用 ${BUILD_DIR}"
+    [[ -d "${ROOTFS_DIR}" ]] || die "rootfs 不存在，无法跳过 bootstrap"
 
-echo "[Phase 1] mmdebstrap ${DEBIAN_SUITE} (${ARCH}) ..."
-mmdebstrap --variant=essential \
-    --include="${SIGNED_PKGS}" \
-    "${DEBIAN_SUITE}" "${ROOTFS_DIR}" "${DEBIAN_MIRROR}"
-echo "  Phase 1 完成。"
+    VMLINUZ=$(ls "${ROOTFS_DIR}"/boot/vmlinuz-* 2>/dev/null | head -1)
+    [[ -n "${VMLINUZ}" ]] || die "复用 rootfs 中未找到 vmlinuz"
+    KVER=$(basename "${VMLINUZ}" | sed 's/^vmlinuz-//')
+    echo "  内核版本：${KVER}"
 
-# =============================================================================
-# Phase 2: 提取组件
-# =============================================================================
-echo ""; echo "[Phase 2] 提取组件 ..."
+    GRUB_SRC=$(find "${ROOTFS_DIR}" -name "${GRUB_NAME}" 2>/dev/null | head -1)
+    [[ -n "${GRUB_SRC}" ]] || die "复用 rootfs 中未找到 GRUB"
 
-VMLINUZ=$(ls "${ROOTFS_DIR}"/boot/vmlinuz-* 2>/dev/null | head -1)
-[[ -n "${VMLINUZ}" ]] || die "rootfs 中未找到 vmlinuz"
-KVER=$(basename "${VMLINUZ}" | sed 's/^vmlinuz-//')
-echo "  内核版本：${KVER}"
+    SHIM_SRC=$(find "${ROOTFS_DIR}" -name "${SHIM_NAME}" 2>/dev/null | head -1)
+    [[ -n "${SHIM_SRC}" ]] || die "复用 rootfs 中未找到 shim"
+else
+    rm -rf "${BUILD_DIR}"
+    mkdir -p "${BUILD_DIR}"
 
-GRUB_SRC=$(find "${ROOTFS_DIR}" -name "${GRUB_NAME}" 2>/dev/null | head -1)
-[[ -n "${GRUB_SRC}" ]] || die "rootfs 中未找到 GRUB"
+    SIGNED_PKGS="${KERNEL_PKG},${SHIM_PKG},${GRUB_PKG}"
 
-if [[ "${SECURE_BOOT}" == "1" ]]; then
+    echo "[Phase 1] mmdebstrap ${DEBIAN_SUITE} (${ARCH}) ..."
+    mmdebstrap --variant=essential \
+        --include="${SIGNED_PKGS}" \
+        "${DEBIAN_SUITE}" "${ROOTFS_DIR}" "${DEBIAN_MIRROR}"
+    echo "  Phase 1 完成。"
+
+    # =============================================================================
+    # Phase 2: 提取组件
+    # =============================================================================
+    echo ""; echo "[Phase 2] 提取组件 ..."
+
+    VMLINUZ=$(ls "${ROOTFS_DIR}"/boot/vmlinuz-* 2>/dev/null | head -1)
+    [[ -n "${VMLINUZ}" ]] || die "rootfs 中未找到 vmlinuz"
+    KVER=$(basename "${VMLINUZ}" | sed 's/^vmlinuz-//')
+    echo "  内核版本：${KVER}"
+
+    GRUB_SRC=$(find "${ROOTFS_DIR}" -name "${GRUB_NAME}" 2>/dev/null | head -1)
+    [[ -n "${GRUB_SRC}" ]] || die "rootfs 中未找到 GRUB"
+
     SHIM_SRC=$(find "${ROOTFS_DIR}" -name "${SHIM_NAME}" 2>/dev/null | head -1)
     [[ -n "${SHIM_SRC}" ]] || die "rootfs 中未找到 shim"
-fi
 
-rm -rf "${ROOTFS_DIR}/var/lib/apt/lists"/* \
-       "${ROOTFS_DIR}/var/cache/apt"/*
-echo "  Phase 2 完成。"
+    rm -rf "${ROOTFS_DIR}/var/lib/apt/lists"/* \
+           "${ROOTFS_DIR}/var/cache/apt"/*
+
+    echo "  Phase 2 完成。"
+fi
 
 # =============================================================================
 # Phase 3: 组装 initramfs
@@ -205,7 +223,7 @@ for f in modules.builtin modules.builtin.modinfo; do
     [ -f "${MOD_SRC}/$f" ] && cp "${MOD_SRC}/$f" "${MOD_DEST}/"
 done
 
-rm -rf "${ROOTFS_DIR}"
+[[ "${SKIP_BOOTSTRAP}" == "1" ]] && rm -rf "${ROOTFS_DIR}"
 depmod -b "${INITRAMFS_DIR}" "${KVER}"
 
 MOD_COUNT=$(find "${INITRAMFS_DIR}/lib/modules" -name '*.ko' | wc -l)
