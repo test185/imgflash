@@ -144,8 +144,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-[[ -n "${IMAGE_URL}" || -n "${IMAGE_PATH}" ]] || die "必须提供镜像路径 (-i) 或下载 URL (-u)"
-
 # --- 构建目录 ---
 BUILD_DIR="${SCRIPT_DIR}/build/template"
 OUTPUT_DIR="${SCRIPT_DIR}/output"
@@ -158,16 +156,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# --- 下载镜像（如果提供URL） ---
-if [[ -n "${IMAGE_URL}" ]]; then
-    mkdir -p "${BUILD_DIR}"
-    download_image "${IMAGE_URL}" "${SHA256_CHECKSUM}"
-    IMAGE_PATH="${BUILD_DIR}/image.img"
-fi
-
-# --- 验证输入 ---
-[[ -n "${IMAGE_PATH}" ]] || die "必须指定镜像文件 (-i)"
-[[ -f "${IMAGE_PATH}" ]] || die "找不到镜像文件: ${IMAGE_PATH}"
+# --- 验证基础输入 ---
+[[ -n "${IMAGE_URL}" || -n "${IMAGE_PATH}" ]] || die "必须提供镜像路径 (-i) 或下载 URL (-u)"
 
 # --- 自动选择模板 ---
 if [[ -z "${TEMPLATE_PATH}" ]]; then
@@ -182,14 +172,24 @@ fi
 
 [[ -f "${TEMPLATE_PATH}" ]] || die "找不到模板文件: ${TEMPLATE_PATH}"
 
+# --- 准备构建目录 ---
+rm -rf "${BUILD_DIR}"
+mkdir -p "${BUILD_DIR}"
+
+# --- 下载镜像（如果提供URL） ---
+if [[ -n "${IMAGE_URL}" ]]; then
+    download_image "${IMAGE_URL}" "${SHA256_CHECKSUM}"
+    IMAGE_PATH="${BUILD_DIR}/image.img"
+fi
+
+# --- 验证镜像文件 ---
+[[ -n "${IMAGE_PATH}" ]] || die "必须指定镜像文件 (-i)"
+[[ -f "${IMAGE_PATH}" ]] || die "找不到镜像文件: ${IMAGE_PATH}"
+
 # --- 确定输出名称 ---
 OUTPUT_NAME="${OUTPUT_NAME:-$(basename "${IMAGE_PATH}" .img)}"
 FINAL_ISO="${OUTPUT_DIR}/${OUTPUT_NAME}.iso"
 mkdir -p "${OUTPUT_DIR}"
-
-# --- 准备构建目录 ---
-rm -rf "${BUILD_DIR}"
-mkdir -p "${BUILD_DIR}"
 
 echo ""; echo "=========================================="
 echo "  ImgFlash - 快速构建模式"
