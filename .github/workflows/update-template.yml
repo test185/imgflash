@@ -132,7 +132,7 @@ jobs:
               -v "${BUILD_DIR_HOST}:/build/build/${{ matrix.arch }}" \
               -v "$(pwd)/build.env:/build/build.env" \
               --entrypoint bash \
-              imgflash bash create-template.sh "${ARGS[@]}"
+              imgflash create-template.sh "${ARGS[@]}"
             
             FIRST=0
           done
