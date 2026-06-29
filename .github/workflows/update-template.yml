@@ -21,12 +21,33 @@ on:
         default: false
 
 jobs:
+  prepare:
+    name: "准备构建矩阵"
+    runs-on: ubuntu-latest
+    outputs:
+      arch_matrix: ${{ steps.set-matrix.outputs.arch_matrix }}
+
+    steps:
+      - name: "生成构建矩阵"
+        id: set-matrix
+        run: |
+          ARCHS=()
+          [[ "${{ github.event.inputs.amd64 }}" == "true" ]] && ARCHS+=(amd64)
+          [[ "${{ github.event.inputs.amd64_secureboot }}" == "true" ]] && ARCHS+=(amd64)
+          [[ "${{ github.event.inputs.arm64 }}" == "true" ]] && ARCHS+=(arm64)
+          [[ "${{ github.event.inputs.arm64_secureboot }}" == "true" ]] && ARCHS+=(arm64)
+          UNIQUE=$(echo "${ARCHS[@]}" | tr ' ' '\n' | sort -u | jq -R -s -c 'split("\n")[:-1]')
+          echo "arch_matrix=${UNIQUE}" >> $GITHUB_OUTPUT
+          echo "需构建架构: $(echo "$UNIQUE" | jq -r '.[]' | tr '\n' ' ')"
+
   build:
     name: "构建模板 (${{ matrix.arch }})"
+    needs: prepare
+    if: ${{ needs.prepare.outputs.arch_matrix != '[]' }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     strategy:
       matrix:
-        arch: [amd64, arm64]
+        arch: ${{ fromJson(needs.prepare.outputs.arch_matrix) }}
       fail-fast: false
     permissions:
       contents: write
