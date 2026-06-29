@@ -272,17 +272,17 @@ if [[ "${USE_TUI}" == "1" ]]; then
     cp "${SCRIPT_DIR}/binaries/disktui-lite" "${INITRAMFS_DIR}/usr/bin/disktui-lite"
     chmod +x "${INITRAMFS_DIR}/usr/bin/disktui-lite"
     ln -s /usr/bin/disktui-lite "${INITRAMFS_DIR}/init"
-else
-    cp /bin/busybox "${INITRAMFS_DIR}/bin/busybox"
-    chmod +x "${INITRAMFS_DIR}/bin/busybox"
-    ln -s busybox "${INITRAMFS_DIR}/bin/sh"
-
-    cp "${SCRIPT_DIR}/scripts/init.sh" "${INITRAMFS_DIR}/init"
-    chmod +x "${INITRAMFS_DIR}/init"
-    sed -i "s/TRIES -lt 10/TRIES -lt ${SCAN_TIMEOUT}/" "${INITRAMFS_DIR}/init"
-    sed -i "s/after 10 seconds/after ${SCAN_TIMEOUT} seconds/" "${INITRAMFS_DIR}/init"
-    cp "${SCRIPT_DIR}/scripts/installer.sh" "${INITRAMFS_DIR}/usr/bin/installer"
-    chmod +x "${INITRAMFS_DIR}/usr/bin/installer"
+# else
+#     cp /bin/busybox "${INITRAMFS_DIR}/bin/busybox"
+#     chmod +x "${INITRAMFS_DIR}/bin/busybox"
+#     ln -s busybox "${INITRAMFS_DIR}/bin/sh"
+#
+#     cp "${SCRIPT_DIR}/scripts/init.sh" "${INITRAMFS_DIR}/init"
+#     chmod +x "${INITRAMFS_DIR}/init"
+#     sed -i "s/TRIES -lt 10/TRIES -lt ${SCAN_TIMEOUT}/" "${INITRAMFS_DIR}/init"
+#     sed -i "s/after 10 seconds/after ${SCAN_TIMEOUT} seconds/" "${INITRAMFS_DIR}/init"
+#     cp "${SCRIPT_DIR}/scripts/installer.sh" "${INITRAMFS_DIR}/usr/bin/installer"
+#     chmod +x "${INITRAMFS_DIR}/usr/bin/installer"
 fi
 
 echo "${REQUIRED_MODULES}" | tr ' ' '\n' > "${INITRAMFS_DIR}/etc/modules"
