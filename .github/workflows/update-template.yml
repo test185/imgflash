@@ -125,7 +125,7 @@ jobs:
               -v "$(pwd)/binaries:/build/binaries" \
               -v "$(pwd)/templates:/build/templates" \
               -v "$(pwd)/build.env:/build/build.env" \
-              imgflash create-template.sh "${ARGS[@]}"
+              imgflash bash create-template.sh "${ARGS[@]}"
           done
 
       - name: "提交模板"

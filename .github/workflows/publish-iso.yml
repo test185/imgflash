@@ -170,7 +170,7 @@ jobs:
             -v "$(pwd)/build.env:/build/build.env" \
             -e ARCH="${ARCH}" \
             -e ENABLE_SECURE_BOOT="${ENABLE_SECURE_BOOT}" \
-            imgflash build-from-template.sh ${ARGS}
+            imgflash bash build-from-template.sh ${ARGS}
 
       - name: "完整构建（无模板或强制）"
         if: ${{ steps.check_template.outputs.template_exists != 'true' || github.event.inputs.no_cache == 'true' }}
@@ -182,7 +182,7 @@ jobs:
             -v "$(pwd)/binaries:/build/binaries" \
             -v "$(pwd)/output:/build/output" \
             -v "$(pwd)/templates:/build/templates" \
-            imgflash build.sh ${ARGS}
+            imgflash bash build.sh ${ARGS}
 
       - name: "获取 ISO 文件名"
         id: iso_file
