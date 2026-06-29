@@ -75,6 +75,7 @@ case "${ARCH}" in
         SHIM_NAME="shimx64.efi.signed"
         GRUB_NAME="grubx64.efi.signed"
         EFI_BOOT="BOOTX64.EFI"
+        HAS_BIOS=1
         ;;
     arm64)
         KERNEL_PKG="linux-image-arm64"
@@ -83,9 +84,14 @@ case "${ARCH}" in
         SHIM_NAME="shimaa64.efi.signed"
         GRUB_NAME="grubaa64.efi.signed"
         EFI_BOOT="BOOTAA64.EFI"
+        HAS_BIOS=0
         ;;
     *) die "不支持的架构 '${ARCH}'" ;;
 esac
+
+ISOLINUX_BIN=$(find /usr -name isolinux.bin 2>/dev/null | head -1)
+LDLINUX_C32=$(find /usr -name ldlinux.c32 2>/dev/null | head -1)
+ISOHDPFX_PATH=$(find /usr -name isohdpfx.bin 2>/dev/null | head -1)
 
 # --- 构建目录 ---
 BUILD_DIR="${SCRIPT_DIR}/build/${ARCH}"
@@ -143,7 +149,6 @@ else
 
     echo "[Phase 1] mmdebstrap ${DEBIAN_SUITE} (${ARCH}) ..."
     mmdebstrap --variant=essential \
-        --keyring=/usr/share/keyrings/debian-archive-keyring.gpg \
         --include="${SIGNED_PKGS}" \
         "${DEBIAN_SUITE}" "${ROOTFS_DIR}" "${DEBIAN_MIRROR}"
     echo "  Phase 1 完成。"
@@ -186,6 +191,7 @@ rm -rf "${INITRAMFS_DIR}"
 mkdir -p "${INITRAMFS_DIR}"/{bin,sbin,etc,proc,sys,dev,run,tmp}
 mkdir -p "${INITRAMFS_DIR}"/{usr/bin,usr/sbin,lib}
 mkdir -p "${INITRAMFS_DIR}"/{media/cdrom,image,var/log,root}
+mkdir -p "${INITRAMFS_DIR}"/{dev/pts,dev/shm}
 
 # BusyBox（带 modprobe 支持）
 ARCH_DIR="${ARCH^^}"
@@ -293,10 +299,16 @@ EOF
 # 创建 efi.img（El Torito 标准）
 mkdir -p "${ISO_DIR}/boot/grub"
 EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
-EFI_SIZE_KB=$(( $(du -skL "${GRUB_SRC}" 2>/dev/null | awk '{print $1}') + 580 ))
-[[ "${SECURE_BOOT}" == "1" ]] && EFI_SIZE_KB=$(( EFI_SIZE_KB + $(du -skL "${SHIM_SRC}" 2>/dev/null | awk '{print $1}') ))
+EFI_FILES="${GRUB_SRC}"
+[[ "${SECURE_BOOT}" == "1" ]] && EFI_FILES="${GRUB_SRC} ${SHIM_SRC}"
 
-echo "  EFI 镜像: ${EFI_SIZE_KB} KB"
+# 动态计算FAT镜像大小
+FILE_SIZE_KB=$(du -skL ${EFI_FILES} 2>/dev/null | awk '{s+=$1} END {print s}')
+FILE_COUNT=$(echo "${EFI_FILES}" | wc -w)
+FAT_OVERHEAD=80
+DIR_ENTRIES=$((FILE_COUNT * 4))
+EFI_SIZE_KB=$((FILE_SIZE_KB + FAT_OVERHEAD + DIR_ENTRIES + 20))
+echo "  EFI 镜像: ${EFI_SIZE_KB} KB (${FILE_COUNT} 个文件, ${FILE_SIZE_KB}KB)"
 
 dd if=/dev/zero of="${EFI_IMG}" bs=1k count="${EFI_SIZE_KB}" 2>/dev/null
 mkfs.vfat "${EFI_IMG}" >/dev/null
@@ -314,15 +326,58 @@ search --no-floppy --label --set=root ${VOLUME_LABEL}
 configfile /EFI/debian/grub.cfg
 STUB_EOF
 
+# --- BIOS 引导（syslinux，仅 amd64） ---
+if [[ "${HAS_BIOS}" -eq 1 ]]; then
+    [[ -n "${ISOLINUX_BIN}" && -n "${LDLINUX_C32}" && -n "${ISOHDPFX_PATH}" ]] || \
+        die "未找到 syslinux 引导文件。请安装 syslinux-common 和 isolinux 包。"
+
+    mkdir -p "${ISO_DIR}/boot/syslinux"
+    cp "${ISOLINUX_BIN}"  "${ISO_DIR}/boot/syslinux/isolinux.bin"
+    cp "${LDLINUX_C32}"   "${ISO_DIR}/boot/syslinux/ldlinux.c32"
+
+    SYSLINUX_TIMEOUT=$(( BOOT_TIMEOUT * 10 ))
+
+    cat > "${ISO_DIR}/boot/syslinux/syslinux.cfg" << EOF
+DEFAULT imgflash
+PROMPT 0
+TIMEOUT ${SYSLINUX_TIMEOUT}
+
+LABEL imgflash
+  KERNEL /boot/vmlinuz
+  INITRD /boot/initrd.img
+  APPEND ${KERNEL_PARAMS}
+EOF
+fi
+
 echo "  生成模板 ISO ..."
-xorriso -as mkisofs \
-    -iso-level 3 \
-    -o "${FINAL_ISO}" \
-    -full-iso9660-filenames \
-    -volid "${VOLUME_LABEL}" \
-    -e boot/grub/efi.img \
-    -no-emul-boot \
-    "${ISO_DIR}"
+
+if [[ "${HAS_BIOS}" -eq 1 ]]; then
+    xorriso -as mkisofs \
+        -iso-level 3 \
+        -o "${FINAL_ISO}" \
+        -full-iso9660-filenames \
+        -volid "${VOLUME_LABEL}" \
+        -isohybrid-mbr "${ISOHDPFX_PATH}" \
+        -eltorito-boot boot/syslinux/isolinux.bin \
+            -no-emul-boot \
+            -boot-info-table \
+            --eltorito-catalog boot/syslinux/boot.cat \
+        -eltorito-alt-boot \
+            -e boot/grub/efi.img \
+            -no-emul-boot \
+        -isohybrid-gpt-basdat \
+        -append_partition 2 0xef "${ISO_DIR}/boot/grub/efi.img" \
+        "${ISO_DIR}"
+else
+    xorriso -as mkisofs \
+        -iso-level 3 \
+        -o "${FINAL_ISO}" \
+        -full-iso9660-filenames \
+        -volid "${VOLUME_LABEL}" \
+        -e boot/grub/efi.img \
+        -no-emul-boot \
+        "${ISO_DIR}"
+fi
 
 rm -rf "${ISO_DIR}"
 BUILD_SUCCESS=1
