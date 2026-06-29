@@ -191,7 +191,7 @@ OUTPUT_NAME="${OUTPUT_NAME:-$(basename "${IMAGE_PATH}" .img)}"
 
 # --- 统一镜像源文件名 ---
 if [[ "${IMAGE_PATH}" != "${BUILD_DIR}/image.img" ]]; then
-    ln -f "${IMAGE_PATH}" "${BUILD_DIR}/image.img"
+    ln -sf "${IMAGE_PATH}" "${BUILD_DIR}/image.img"
     IMAGE_PATH="${BUILD_DIR}/image.img"
 fi
 
