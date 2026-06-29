@@ -148,7 +148,7 @@ download_image() {
     ISO_NAME=${ISO_NAME:-$(basename "${extracted_name}" .img)}
 }
 
-# --- CLI 参数解析 ---
+# --- CLI 参数 ---
 IMAGE_PATH=""
 IMAGE_URL=""
 ISO_NAME=""
