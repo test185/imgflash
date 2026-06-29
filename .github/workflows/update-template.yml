@@ -32,21 +32,15 @@ jobs:
       - name: "生成构建矩阵"
         id: set-matrix
         run: |
-          MATRIX="[]"
-          
-          ITEMS=(
-            "${{ github.event.inputs.amd64 }}|amd64|false"
-            "${{ github.event.inputs.amd64_secureboot }}|amd64|true"
-            "${{ github.event.inputs.arm64 }}|arm64|false"
-            "${{ github.event.inputs.arm64_secureboot }}|arm64|true"
+          MATRIX=$(cat << 'EOF' | jq -c 'map(select(.enable == "true") | del(.enable))'
+          [
+            {"enable": "${{ github.event.inputs.amd64 }}", "arch": "amd64", "secure_boot": false},
+            {"enable": "${{ github.event.inputs.amd64_secureboot }}", "arch": "amd64", "secure_boot": true},
+            {"enable": "${{ github.event.inputs.arm64 }}", "arch": "arm64", "secure_boot": false},
+            {"enable": "${{ github.event.inputs.arm64_secureboot }}", "arch": "arm64", "secure_boot": true}
+          ]
+          EOF
           )
-          
-          for item in "${ITEMS[@]}"; do
-            IFS='|' read -r enabled arch sb <<< "$item"
-            if [ "$enabled" == "true" ]; then
-              MATRIX=$(echo "$MATRIX" | jq -c --arg a "$arch" --argjson s "$sb" '. + [{arch: $a, secure_boot: $s}]')
-            fi
-          done
           
           echo "matrix=${MATRIX}" >> $GITHUB_OUTPUT
           
