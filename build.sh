@@ -26,7 +26,7 @@ case "${ARCH}" in
         ;;
     arm64)
         KERNEL_PKG="linux-image-arm64"
-        SHIM_PKG="shim-arm64-signed"
+        SHIM_PKG="shim-signed"
         GRUB_PKG="grub-efi-arm64-signed"
         SHIM_FIND="shimaa64.efi.signed"
         GRUB_FIND="grubaa64.efi.signed"
@@ -113,32 +113,32 @@ download_image() {
     esac
 
     if [[ -z "${extracted_name}" ]]; then
-    case "${file_type}" in
-        application/gzip)
-            extracted_name=$(basename "$url" | sed 's/\.gz$//')
-            gunzip -c "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
-            ;;
-        application/x-xz)
-            extracted_name=$(basename "$url" | sed 's/\.xz$//')
-            xz -dc "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
-            ;;
-        application/x-bzip2)
-            extracted_name=$(basename "$url" | sed 's/\.bz2$//')
-            bzip2 -dc "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
-            ;;
-        application/zip)
-            unzip -j -o "${BUILD_DIR}/downloaded_file" -d "${BUILD_DIR}/"
-            extracted_name=$(ls "${BUILD_DIR}"/*.img 2>/dev/null | head -n1 | xargs basename)
-            ;;
-        application/x-7z-compressed)
-            7z x "${BUILD_DIR}/downloaded_file" -o"${BUILD_DIR}/"
-            extracted_name=$(ls "${BUILD_DIR}"/*.img 2>/dev/null | head -n1 | xargs basename)
-            ;;
-        *)
-            extracted_name=$(basename "$url")
-            mv "${BUILD_DIR}/downloaded_file" "${BUILD_DIR}/${extracted_name}"
-            ;;
-    esac
+        case "${file_type}" in
+            application/gzip)
+                extracted_name=$(basename "$url" | sed 's/\.gz$//')
+                gunzip -c "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
+                ;;
+            application/x-xz)
+                extracted_name=$(basename "$url" | sed 's/\.xz$//')
+                xz -dc "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
+                ;;
+            application/x-bzip2)
+                extracted_name=$(basename "$url" | sed 's/\.bz2$//')
+                bzip2 -dc "${BUILD_DIR}/downloaded_file" > "${BUILD_DIR}/${extracted_name}"
+                ;;
+            application/zip)
+                unzip -j -o "${BUILD_DIR}/downloaded_file" -d "${BUILD_DIR}/"
+                extracted_name=$(ls "${BUILD_DIR}"/*.img 2>/dev/null | head -n1 | xargs basename)
+                ;;
+            application/x-7z-compressed)
+                7z x "${BUILD_DIR}/downloaded_file" -o"${BUILD_DIR}/"
+                extracted_name=$(ls "${BUILD_DIR}"/*.img 2>/dev/null | head -n1 | xargs basename)
+                ;;
+            *)
+                extracted_name=$(basename "$url")
+                mv "${BUILD_DIR}/downloaded_file" "${BUILD_DIR}/${extracted_name}"
+                ;;
+        esac
     fi
 
     rm -f "${BUILD_DIR}/downloaded_file"
@@ -153,6 +153,7 @@ IMAGE_PATH=""
 IMAGE_URL=""
 ISO_NAME=""
 SHA256_CHECKSUM=""
+NO_CACHE=""
 
 show_help() {
     cat <<EOF
@@ -165,6 +166,7 @@ ImgFlash - 纯 initramfs ISO 构建器
   -u, --url      从 URL 下载镜像文件
   -n, --name     输出 ISO 名称（默认从镜像文件名推导）
   -c, --checksum SHA256 校验值（可选）
+  --no-cache     强制完整构建
   -h, --help     显示此帮助
 EOF
 }
@@ -175,6 +177,7 @@ while [[ $# -gt 0 ]]; do
         -n|--name)  ISO_NAME="$2"; shift 2 ;;
         -u|--url)   IMAGE_URL="$2"; shift 2 ;;
         -c|--checksum) SHA256_CHECKSUM="$2"; shift 2 ;;
+        --no-cache) NO_CACHE="1"; shift ;;
         -h|--help)  show_help; exit 0 ;;
         *) echo "未知选项: $1"; show_help; exit 1 ;;
     esac
@@ -193,12 +196,13 @@ echo "  依赖检查通过"
 # --- 确定输入镜像 ---
 mkdir -p "${BUILD_DIR}" "${OUTPUT_DIR}"
 
-[[ -n "${IMAGE_URL}" ]] && download_image "${IMAGE_URL}" "${SHA256_CHECKSUM}"
+IMAGE_SRC=""
+[[ -n "${IMAGE_URL}" ]] && { download_image "${IMAGE_URL}" "${SHA256_CHECKSUM}"; IMAGE_SRC="${BUILD_DIR}/temp.img"; }
 
 if [[ -n "${IMAGE_PATH}" ]]; then
     [[ -f "${IMAGE_PATH}" ]] || die "找不到镜像文件：${IMAGE_PATH}"
     [[ -n "${SHA256_CHECKSUM}" ]] && { echo "  正在验证本地镜像 SHA256..."; verify_sha256 "${IMAGE_PATH}" "${SHA256_CHECKSUM}" || exit 1; }
-    cp "${IMAGE_PATH}" "${BUILD_DIR}/temp.img"
+    IMAGE_SRC="${IMAGE_PATH}"
     ISO_NAME=${ISO_NAME:-$(basename "${IMAGE_PATH}" .img)}
 fi
 
@@ -264,24 +268,22 @@ if [[ "${USE_TUI}" == "1" ]]; then
     cp "${SCRIPT_DIR}/binaries/${ARCH_DIR}/busybox_MODPROBE"  "${INITRAMFS_DIR}/sbin/modprobe"
     cp "${SCRIPT_DIR}/binaries/${ARCH_DIR}/busybox_MOUNT"     "${INITRAMFS_DIR}/bin/mount"
     chmod +x "${INITRAMFS_DIR}/sbin/modprobe" "${INITRAMFS_DIR}/bin/mount"
-else
-    cp /bin/busybox "${INITRAMFS_DIR}/bin/busybox"
-    chmod +x "${INITRAMFS_DIR}/bin/busybox"
-    ln -s busybox "${INITRAMFS_DIR}/bin/sh"
-fi
 
-if [[ "${USE_TUI}" == "1" ]]; then
     [[ -f "${SCRIPT_DIR}/binaries/disktui-lite" ]] || die "找不到 disktui-lite，请先构建"
     cp "${SCRIPT_DIR}/binaries/disktui-lite" "${INITRAMFS_DIR}/usr/bin/disktui-lite"
     chmod +x "${INITRAMFS_DIR}/usr/bin/disktui-lite"
     ln -s /usr/bin/disktui-lite "${INITRAMFS_DIR}/init"
-else
-    cp "${SCRIPT_DIR}/scripts/init.sh" "${INITRAMFS_DIR}/init"
-    chmod +x "${INITRAMFS_DIR}/init"
-    sed -i "s/TRIES -lt 10/TRIES -lt ${SCAN_TIMEOUT}/" "${INITRAMFS_DIR}/init"
-    sed -i "s/after 10 seconds/after ${SCAN_TIMEOUT} seconds/" "${INITRAMFS_DIR}/init"
-    cp "${SCRIPT_DIR}/scripts/installer.sh" "${INITRAMFS_DIR}/usr/bin/installer"
-    chmod +x "${INITRAMFS_DIR}/usr/bin/installer"
+# else
+#     cp /bin/busybox "${INITRAMFS_DIR}/bin/busybox"
+#     chmod +x "${INITRAMFS_DIR}/bin/busybox"
+#     ln -s busybox "${INITRAMFS_DIR}/bin/sh"
+#
+#     cp "${SCRIPT_DIR}/scripts/init.sh" "${INITRAMFS_DIR}/init"
+#     chmod +x "${INITRAMFS_DIR}/init"
+#     sed -i "s/TRIES -lt 10/TRIES -lt ${SCAN_TIMEOUT}/" "${INITRAMFS_DIR}/init"
+#     sed -i "s/after 10 seconds/after ${SCAN_TIMEOUT} seconds/" "${INITRAMFS_DIR}/init"
+#     cp "${SCRIPT_DIR}/scripts/installer.sh" "${INITRAMFS_DIR}/usr/bin/installer"
+#     chmod +x "${INITRAMFS_DIR}/usr/bin/installer"
 fi
 
 echo "${REQUIRED_MODULES}" | tr ' ' '\n' > "${INITRAMFS_DIR}/etc/modules"
@@ -350,17 +352,14 @@ echo "  Phase 3 完成。"
 # =============================================================================
 echo ""; echo "[Phase 4] 打包镜像容器 ..."
 
-mv "${BUILD_DIR}/temp.img" "${BUILD_DIR}/image.img"
-fallocate --dig-holes "${BUILD_DIR}/image.img" 2>/dev/null || true
-echo "  原始镜像大小：$(ls -lh "${BUILD_DIR}/image.img" | awk '{print $5}')"
+echo "  原始镜像大小：$(ls -lh "${IMAGE_SRC}" | awk '{print $5}')"
 
 echo "  创建 squashfs（zstd）..."
-mksquashfs "${BUILD_DIR}/image.img" "${BUILD_DIR}/image.squashfs" \
+mksquashfs "${IMAGE_SRC}" "${BUILD_DIR}/image.squashfs" \
     -b 1M -comp zstd -Xcompression-level ${ZSTD_LEVEL} \
     -no-fragments -no-duplicates -no-progress -no-xattrs
 
 echo "  Squashfs 大小：$(ls -lh "${BUILD_DIR}/image.squashfs" | awk '{print $5}')"
-rm -f "${BUILD_DIR}/image.img"
 echo "  Phase 4 完成。"
 
 # =============================================================================
@@ -432,8 +431,14 @@ mkdir -p "${ISO_DIR}/boot/grub"
 EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
 EFI_FILES="${GRUB_SRC}"
 [[ "${ENABLE_SECURE_BOOT:-0}" == "1" ]] && EFI_FILES="${SHIM_SRC} ${GRUB_SRC}"
-EFI_SIZE_KB=$(( $(du -skL ${EFI_FILES} 2>/dev/null | awk '{s+=$1} END {print s}') + 580 ))
-echo "  EFI 镜像: ${EFI_SIZE_KB} KB"
+
+# 动态计算FAT镜像大小
+FILE_SIZE_KB=$(du -skL ${EFI_FILES} 2>/dev/null | awk '{s+=$1} END {print s}')
+FILE_COUNT=$(echo "${EFI_FILES}" | wc -w)
+FAT_OVERHEAD=80
+DIR_ENTRIES=$((FILE_COUNT * 4))
+EFI_SIZE_KB=$((FILE_SIZE_KB + FAT_OVERHEAD + DIR_ENTRIES + 20))
+echo "  EFI 镜像: ${EFI_SIZE_KB} KB (${FILE_COUNT} 个文件, ${FILE_SIZE_KB}KB)"
 
 dd if=/dev/zero of="${EFI_IMG}" bs=1k count="${EFI_SIZE_KB}" 2>/dev/null
 mkfs.vfat "${EFI_IMG}" >/dev/null

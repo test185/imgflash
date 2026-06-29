@@ -20,10 +20,10 @@ on:
         description: '启用 Secure Boot'
         type: boolean
         default: false
-      use_tui:
-        description: '使用 TUI'
-        type: boolean
-        default: true
+#      use_tui:
+#        description: '使用 TUI'
+#        type: boolean
+#        default: true
       free_space:
         description: '释放 Action 空间'
         type: boolean
@@ -69,43 +69,44 @@ jobs:
             Dockerfile
 
       - name: "安装 Rust 工具链"
-        if: ${{ github.event.inputs.use_tui == 'true' }}
+#        if: ${{ github.event.inputs.use_tui == 'true' }}
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ env.TARGET }}
 
       - name: "安装 Zig"
-        if: ${{ github.event.inputs.use_tui == 'true' }}
+#        if: ${{ github.event.inputs.use_tui == 'true' }}
         uses: mlugg/setup-zig@v2.1.0
         with:
           version: master
 
       - name: "安装 MUSL"
-        if: ${{ github.event.inputs.use_tui == 'true' }}
+#        if: ${{ github.event.inputs.use_tui == 'true' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
 
       - name: "Rust 编译缓存"
-        if: ${{ github.event.inputs.use_tui == 'true' }}
+#        if: ${{ github.event.inputs.use_tui == 'true' }}
         uses: swatinem/rust-cache@v2
         with:
           workspaces: disktui-lite
 
       - name: "强制清理 Rust 编译缓存"
-        if: ${{ github.event.inputs.use_tui == 'true' && github.event.inputs.no_cache == 'true' }}
+#        if: ${{ github.event.inputs.use_tui == 'true' && github.event.inputs.no_cache == 'true' }}
+        if: ${{ github.event.inputs.no_cache == 'true' }}
         run: cargo clean
         working-directory: disktui-lite
 
       - name: "构建 disktui-lite"
-        if: ${{ github.event.inputs.use_tui == 'true' }}
+#        if: ${{ github.event.inputs.use_tui == 'true' }}
         run: |
           cargo install --locked cargo-zigbuild
           cargo zigbuild --release --target ${{ env.TARGET }}
         working-directory: disktui-lite
 
       - name: "保存 disktui-lite"
-        if: ${{ github.event.inputs.use_tui == 'true' }}
+#        if: ${{ github.event.inputs.use_tui == 'true' }}
         run: |
           mkdir -p ../binaries
           cp target/${{ env.TARGET }}/release/disktui-lite ../binaries/disktui-lite
@@ -118,9 +119,9 @@ jobs:
         if: ${{ github.event.inputs.secure_boot == 'true' }}
         run: sed -i 's/^ENABLE_SECURE_BOOT=.*/ENABLE_SECURE_BOOT=1/' build.env
 
-      - name: "设置安装器模式为 Shell"
-        if: ${{ github.event.inputs.use_tui != 'true' }}
-        run: sed -i 's/^USE_TUI=.*/USE_TUI=0/' build.env
+#      - name: "设置安装器模式为 Shell"
+#        if: ${{ github.event.inputs.use_tui != 'true' }}
+#        run: sed -i 's/^USE_TUI=.*/USE_TUI=0/' build.env
 
       - name: "设置 Docker Buildx"
         uses: docker/setup-buildx-action@v3
@@ -145,6 +146,9 @@ jobs:
           fi
           if [ -n "${{ github.event.inputs.sha256 }}" ]; then
             ARGS="$ARGS -c ${{ github.event.inputs.sha256 }}"
+          fi
+          if [ "${{ github.event.inputs.no_cache }}" == "true" ]; then
+            ARGS="$ARGS --no-cache"
           fi
           docker run --rm --privileged \
             -v "$(pwd)/binaries:/build/binaries" \
