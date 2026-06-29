@@ -371,7 +371,6 @@ if [[ "${HAS_BIOS}" -eq 1 ]]; then
         -isohybrid-mbr "${ISOHDPFX_PATH}" \
         -eltorito-boot boot/syslinux/isolinux.bin \
             -no-emul-boot \
-            -boot-info-table \
             --eltorito-catalog boot/syslinux/boot.cat \
         -eltorito-alt-boot \
             -e boot/grub/efi.img \
