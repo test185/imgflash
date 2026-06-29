@@ -97,7 +97,7 @@ ISO_DIR="${BUILD_DIR}/iso"
 # --- 退出清理 ---
 BUILD_SUCCESS=0
 cleanup() {
-    [[ "${BUILD_SUCCESS}" -eq 0 && -d "${BUILD_DIR}" ]] && { echo "清理构建目录..."; rm -rf "${BUILD_DIR}"; }
+    [[ "${BUILD_SUCCESS}" -eq 0 && -d "${BUILD_DIR}" ]] && { echo "清理构建目录..."; sudo rm -rf "${BUILD_DIR}"; }
     :
 }
 trap cleanup EXIT
@@ -129,13 +129,13 @@ if [[ "${SKIP_BOOTSTRAP}" == "1" ]]; then
     SHIM_SRC=$(find "${ROOTFS_DIR}" -name "${SHIM_NAME}" 2>/dev/null | head -1)
     [[ -n "${SHIM_SRC}" ]] || die "复用 rootfs 中未找到 shim"
 else
-    rm -rf "${BUILD_DIR}"
+    sudo rm -rf "${BUILD_DIR}"
     mkdir -p "${BUILD_DIR}"
 
     SIGNED_PKGS="${KERNEL_PKG},${SHIM_PKG},${GRUB_PKG}"
 
     echo "[Phase 1] mmdebstrap ${DEBIAN_SUITE} (${ARCH}) ..."
-    mmdebstrap --variant=essential \
+    sudo mmdebstrap --variant=essential \
         --include="${SIGNED_PKGS}" \
         "${DEBIAN_SUITE}" "${ROOTFS_DIR}" "${DEBIAN_MIRROR}"
     echo "  Phase 1 完成。"
@@ -156,7 +156,7 @@ else
     SHIM_SRC=$(find "${ROOTFS_DIR}" -name "${SHIM_NAME}" 2>/dev/null | head -1)
     [[ -n "${SHIM_SRC}" ]] || die "rootfs 中未找到 shim"
 
-    rm -rf "${ROOTFS_DIR}/var/lib/apt/lists"/* \
+    sudo rm -rf "${ROOTFS_DIR}/var/lib/apt/lists"/* \
            "${ROOTFS_DIR}/var/cache/apt"/*
 
     echo "  Phase 2 完成。"
@@ -223,7 +223,7 @@ for f in modules.builtin modules.builtin.modinfo; do
     [ -f "${MOD_SRC}/$f" ] && cp "${MOD_SRC}/$f" "${MOD_DEST}/"
 done
 
-[[ "${SKIP_BOOTSTRAP}" == "1" ]] && rm -rf "${ROOTFS_DIR}"
+[[ "${SKIP_BOOTSTRAP}" == "1" ]] && sudo rm -rf "${ROOTFS_DIR}"
 depmod -b "${INITRAMFS_DIR}" "${KVER}"
 
 MOD_COUNT=$(find "${INITRAMFS_DIR}/lib/modules" -name '*.ko' | wc -l)
