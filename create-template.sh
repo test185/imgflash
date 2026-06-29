@@ -13,7 +13,6 @@ source "${ENV_FILE}"
 die() { echo "错误：$*" >&2; exit 1; }
 
 # --- CLI 参数 ---
-SECURE_BOOT="${ENABLE_SECURE_BOOT:-0}"
 OUTPUT_NAME=""
 SKIP_BOOTSTRAP=0
 
@@ -48,7 +47,7 @@ EOF
 while [[ $# -gt 0 ]]; do
     case $1 in
         --arch) ARCH="$2"; shift 2 ;;
-        --secure-boot) SECURE_BOOT="1"; shift ;;
+        --secure-boot) ENABLE_SECURE_BOOT="1"; shift ;;
         --skip-bootstrap) SKIP_BOOTSTRAP=1; shift ;;
         -o|--output) OUTPUT_NAME="$2"; shift 2 ;;
         -h|--help) show_help; exit 0 ;;
@@ -59,7 +58,7 @@ done
 # --- 确定输出名称 ---
 if [[ -z "${OUTPUT_NAME}" ]]; then
     OUTPUT_NAME="${ARCH}-template"
-    [[ "${SECURE_BOOT}" == "1" ]] && OUTPUT_NAME="${ARCH}-secureboot-template"
+    [[ "${ENABLE_SECURE_BOOT}" == "1" ]] && OUTPUT_NAME="${ARCH}-secureboot-template"
 fi
 
 TEMPLATES_DIR="${SCRIPT_DIR}/templates"
@@ -72,18 +71,20 @@ case "${ARCH}" in
         KERNEL_PKG="linux-image-amd64"
         SHIM_PKG="shim-signed"
         GRUB_PKG="grub-efi-amd64-signed"
-        SHIM_NAME="shimx64.efi.signed"
-        GRUB_NAME="grubx64.efi.signed"
-        EFI_BOOT="BOOTX64.EFI"
+        SHIM_FIND="shimx64.efi.signed"
+        GRUB_FIND="grubx64.efi.signed"
+        EFI_SHIM_NAME="BOOTX64.EFI"
+        EFI_GRUB_NAME="grubx64.efi"
         HAS_BIOS=1
         ;;
     arm64)
         KERNEL_PKG="linux-image-arm64"
         SHIM_PKG="shim-signed"
         GRUB_PKG="grub-efi-arm64-signed"
-        SHIM_NAME="shimaa64.efi.signed"
-        GRUB_NAME="grubaa64.efi.signed"
-        EFI_BOOT="BOOTAA64.EFI"
+        SHIM_FIND="shimaa64.efi.signed"
+        GRUB_FIND="grubaa64.efi.signed"
+        EFI_SHIM_NAME="BOOTAA64.EFI"
+        EFI_GRUB_NAME="grubaa64.efi"
         HAS_BIOS=0
         ;;
     *) die "不支持的架构 '${ARCH}'" ;;
@@ -111,7 +112,7 @@ echo ""; echo "=========================================="
 echo "  ImgFlash - 创建模板"
 echo "=========================================="
 echo "  架构      : ${ARCH}"
-echo "  Secure Boot: $([ "${SECURE_BOOT}" == "1" ] && echo "启用" || echo "禁用")"
+echo "  Secure Boot: $([ "${ENABLE_SECURE_BOOT}" == "1" ] && echo "启用" || echo "禁用")"
 echo "  输出      : ${OUTPUT_NAME}.iso"
 echo "=========================================="; echo ""
 
@@ -128,24 +129,19 @@ if [[ "${SKIP_BOOTSTRAP}" == "1" ]]; then
     KVER=$(basename "${VMLINUZ}" | sed 's/^vmlinuz-//')
     echo "  内核版本：${KVER}"
 
-    GRUB_SRC=$(find "${ROOTFS_DIR}" -name "${GRUB_NAME}" -print -quit 2>/dev/null)
-    if [[ -z "${GRUB_SRC}" ]]; then
-        echo "  未找到 ${GRUB_NAME}，尝试其他路径..."
-        GRUB_SRC=$(find "${ROOTFS_DIR}" -name "grub*.efi*" -print -quit 2>/dev/null)
-    fi
+    GRUB_SRC=$(find "${ROOTFS_DIR}" -name "${GRUB_FIND}" -print -quit 2>/dev/null)
     [[ -n "${GRUB_SRC}" ]] || die "复用 rootfs 中未找到 GRUB EFI 文件"
 
-    SHIM_SRC=$(find "${ROOTFS_DIR}" -name "${SHIM_NAME}" -print -quit 2>/dev/null)
-    if [[ -z "${SHIM_SRC}" ]]; then
-        SHIM_SRC=$(find "${ROOTFS_DIR}" -name "shim*.efi*" -print -quit 2>/dev/null)
+    if [[ "${ENABLE_SECURE_BOOT}" == "1" ]]; then
+        SHIM_SRC=$(find "${ROOTFS_DIR}" -name "${SHIM_FIND}" -print -quit 2>/dev/null)
+        [[ -n "${SHIM_SRC}" ]] || die "复用 rootfs 中未找到 shim"
     fi
-    [[ "${SECURE_BOOT}" == "1" && -z "${SHIM_SRC}" ]] && die "复用 rootfs 中未找到 shim"
 else
     rm -rf "${BUILD_DIR}"
     mkdir -p "${BUILD_DIR}"
 
     SIGNED_PKGS="${KERNEL_PKG},${GRUB_PKG}"
-    [[ "${SECURE_BOOT}" == "1" ]] && SIGNED_PKGS="${KERNEL_PKG},${SHIM_PKG},${GRUB_PKG}"
+    [[ "${ENABLE_SECURE_BOOT}" == "1" ]] && SIGNED_PKGS="${KERNEL_PKG},${SHIM_PKG},${GRUB_PKG}"
 
     echo "[Phase 1] mmdebstrap ${DEBIAN_SUITE} (${ARCH}) ..."
     mmdebstrap --variant=essential \
@@ -163,18 +159,13 @@ else
     KVER=$(basename "${VMLINUZ}" | sed 's/^vmlinuz-//')
     echo "  内核版本：${KVER}"
 
-    GRUB_SRC=$(find "${ROOTFS_DIR}" -name "${GRUB_NAME}" -print -quit 2>/dev/null)
-    if [[ -z "${GRUB_SRC}" ]]; then
-        echo "  未找到 ${GRUB_NAME}，尝试其他路径..."
-        GRUB_SRC=$(find "${ROOTFS_DIR}" -name "grub*.efi*" -print -quit 2>/dev/null)
-    fi
+    GRUB_SRC=$(find "${ROOTFS_DIR}" -name "${GRUB_FIND}" -print -quit 2>/dev/null)
     [[ -n "${GRUB_SRC}" ]] || die "rootfs 中未找到 GRUB EFI 文件"
 
-    SHIM_SRC=$(find "${ROOTFS_DIR}" -name "${SHIM_NAME}" -print -quit 2>/dev/null)
-    if [[ -z "${SHIM_SRC}" ]]; then
-        SHIM_SRC=$(find "${ROOTFS_DIR}" -name "shim*.efi*" -print -quit 2>/dev/null)
+    if [[ "${ENABLE_SECURE_BOOT}" == "1" ]]; then
+        SHIM_SRC=$(find "${ROOTFS_DIR}" -name "${SHIM_FIND}" -print -quit 2>/dev/null)
+        [[ -n "${SHIM_SRC}" ]] || die "rootfs 中未找到 shim"
     fi
-    [[ "${SECURE_BOOT}" == "1" && -z "${SHIM_SRC}" ]] && die "rootfs 中未找到 shim"
 
     rm -rf "${ROOTFS_DIR}/var/lib/apt/lists"/* \
            "${ROOTFS_DIR}/var/cache/apt"/*
@@ -244,7 +235,17 @@ for f in modules.builtin modules.builtin.modinfo; do
     [ -f "${MOD_SRC}/$f" ] && cp "${MOD_SRC}/$f" "${MOD_DEST}/"
 done
 
-[[ "${SKIP_BOOTSTRAP}" == "1" ]] && rm -rf "${ROOTFS_DIR}"
+cp "${VMLINUZ}"  "${BUILD_DIR}/vmlinuz"
+cp "${GRUB_SRC}" "${BUILD_DIR}/grub.efi"
+VMLINUZ="${BUILD_DIR}/vmlinuz"
+GRUB_SRC="${BUILD_DIR}/grub.efi"
+
+if [[ "${ENABLE_SECURE_BOOT}" == "1" ]]; then
+    cp "${SHIM_SRC}" "${BUILD_DIR}/shim.efi"
+    SHIM_SRC="${BUILD_DIR}/shim.efi"
+fi
+
+rm -rf "${ROOTFS_DIR}"
 depmod -b "${INITRAMFS_DIR}" "${KVER}"
 
 MOD_COUNT=$(find "${INITRAMFS_DIR}/lib/modules" -name '*.ko' | wc -l)
@@ -268,63 +269,8 @@ echo "  Phase 3 完成。"
 echo ""; echo "[Phase 4] 组装模板 ISO ..."
 
 mkdir -p "${ISO_DIR}/boot"
-cp "${VMLINUZ}" "${ISO_DIR}/boot/vmlinuz"
-cp "${BUILD_DIR}/initrd.img" "${ISO_DIR}/boot/initrd.img"
-
-# EFI 引导
-mkdir -p "${ISO_DIR}/EFI/BOOT" "${ISO_DIR}/EFI/debian"
-
-if [[ "${SECURE_BOOT}" == "1" ]]; then
-    cp "${SHIM_SRC}" "${ISO_DIR}/EFI/BOOT/${EFI_BOOT}"
-    cp "${GRUB_SRC}" "${ISO_DIR}/EFI/BOOT/${GRUB_NAME%%.*}.efi"
-else
-    cp "${GRUB_SRC}" "${ISO_DIR}/EFI/BOOT/${EFI_BOOT}"
-fi
-
-# GRUB 配置（不含用户镜像）
-TIMEOUT_STYLE=$([[ "${BOOT_TIMEOUT}" -eq 0 ]] && echo "hidden" || echo "menu")
-
-cat > "${ISO_DIR}/EFI/debian/grub.cfg" << EOF
-search --no-floppy --label --set=root ${VOLUME_LABEL}
-set timeout=${BOOT_TIMEOUT}
-set timeout_style=${TIMEOUT_STYLE}
-set default=0
-
-menuentry "ImgFlash" {
-    linux /boot/vmlinuz ${KERNEL_PARAMS}
-    initrd /boot/initrd.img
-}
-EOF
-
-# 创建 efi.img（El Torito 标准）
-mkdir -p "${ISO_DIR}/boot/grub"
-EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
-EFI_FILES="${GRUB_SRC}"
-[[ "${SECURE_BOOT}" == "1" ]] && EFI_FILES="${GRUB_SRC} ${SHIM_SRC}"
-
-# 动态计算FAT镜像大小
-FILE_SIZE_KB=$(du -skL ${EFI_FILES} 2>/dev/null | awk '{s+=$1} END {print s}')
-FILE_COUNT=$(echo "${EFI_FILES}" | wc -w)
-FAT_OVERHEAD=80
-DIR_ENTRIES=$((FILE_COUNT * 4))
-EFI_SIZE_KB=$((FILE_SIZE_KB + FAT_OVERHEAD + DIR_ENTRIES + 20))
-echo "  EFI 镜像: ${EFI_SIZE_KB} KB (${FILE_COUNT} 个文件, ${FILE_SIZE_KB}KB)"
-
-dd if=/dev/zero of="${EFI_IMG}" bs=1k count="${EFI_SIZE_KB}" 2>/dev/null
-mkfs.vfat "${EFI_IMG}" >/dev/null
-mmd -i "${EFI_IMG}" ::EFI ::EFI/BOOT ::EFI/debian
-
-if [[ "${SECURE_BOOT}" == "1" ]]; then
-    mcopy -i "${EFI_IMG}" "${SHIM_SRC}" ::EFI/BOOT/${EFI_BOOT}
-    mcopy -i "${EFI_IMG}" "${GRUB_SRC}" ::EFI/BOOT/${GRUB_NAME%%.*}.efi
-else
-    mcopy -i "${EFI_IMG}" "${GRUB_SRC}" ::EFI/BOOT/${EFI_BOOT}
-fi
-
-mcopy -i "${EFI_IMG}" - ::EFI/debian/grub.cfg << STUB_EOF
-search --no-floppy --label --set=root ${VOLUME_LABEL}
-configfile /EFI/debian/grub.cfg
-STUB_EOF
+mv "${VMLINUZ}" "${ISO_DIR}/boot/vmlinuz"
+mv "${BUILD_DIR}/initrd.img" "${ISO_DIR}/boot/initrd.img"
 
 # --- BIOS 引导（syslinux，仅 amd64） ---
 if [[ "${HAS_BIOS}" -eq 1 ]]; then
@@ -349,7 +295,72 @@ LABEL imgflash
 EOF
 fi
 
-echo "  生成模板 ISO ..."
+# --- UEFI 引导：ISO 根目录（厂商 fallback） + efi.img（El Torito 标准） ---
+# ISO 根目录：EFI/BOOT/ 供固件 fallback 直接加载
+# ISO 根目录：EFI/debian/grub.cfg 存放唯一真实配置
+# efi.img：放引导文件 + 2 行 stub（search + configfile 指向 ISO 根的真实配置）
+
+TIMEOUT_STYLE=$([[ "${BOOT_TIMEOUT}" -eq 0 ]] && echo "hidden" || echo "menu")
+
+# 唯一真实配置
+CONFIG_CONTENT=$(cat << CONFIG_EOF
+search --no-floppy --label --set=root ${VOLUME_LABEL}
+set timeout=${BOOT_TIMEOUT}
+set timeout_style=${TIMEOUT_STYLE}
+set default=0
+
+menuentry "ImgFlash" {
+    linux /boot/vmlinuz ${KERNEL_PARAMS}
+    initrd /boot/initrd.img
+}
+CONFIG_EOF
+)
+
+# 1. ISO 根：EFI 引导文件 + 真实配置
+mkdir -p "${ISO_DIR}/EFI/BOOT" "${ISO_DIR}/EFI/debian"
+
+src="${GRUB_SRC}"
+[[ "${ENABLE_SECURE_BOOT}" == "1" ]] && src="${SHIM_SRC}"
+cp "$src" "${ISO_DIR}/EFI/BOOT/${EFI_SHIM_NAME}"
+[[ "${ENABLE_SECURE_BOOT}" == "1" ]] && cp "${GRUB_SRC}" "${ISO_DIR}/EFI/BOOT/${EFI_GRUB_NAME}"
+
+echo "${CONFIG_CONTENT}" > "${ISO_DIR}/EFI/debian/grub.cfg"
+
+# 2. efi.img：引导文件 + stub 配置 → 指向 ISO 根的真实配置
+mkdir -p "${ISO_DIR}/boot/grub"
+EFI_IMG="${ISO_DIR}/boot/grub/efi.img"
+EFI_FILES="${GRUB_SRC}"
+[[ "${ENABLE_SECURE_BOOT}" == "1" ]] && EFI_FILES="${SHIM_SRC} ${GRUB_SRC}"
+
+# 动态计算FAT镜像大小
+FILE_SIZE_KB=$(du -skL ${EFI_FILES} 2>/dev/null | awk '{s+=$1} END {print s}')
+FILE_COUNT=$(echo "${EFI_FILES}" | wc -w)
+FAT_OVERHEAD=80
+DIR_ENTRIES=$((FILE_COUNT * 4))
+EFI_SIZE_KB=$((FILE_SIZE_KB + FAT_OVERHEAD + DIR_ENTRIES + 20))
+echo "  EFI 镜像: ${EFI_SIZE_KB} KB (${FILE_COUNT} 个文件, ${FILE_SIZE_KB}KB)"
+
+dd if=/dev/zero of="${EFI_IMG}" bs=1k count="${EFI_SIZE_KB}" 2>/dev/null
+mkfs.vfat "${EFI_IMG}" >/dev/null
+mmd -i "${EFI_IMG}" ::EFI ::EFI/BOOT ::EFI/debian
+
+src="${GRUB_SRC}"
+[[ "${ENABLE_SECURE_BOOT}" == "1" ]] && src="${SHIM_SRC}"
+mcopy -i "${EFI_IMG}" "$src" ::EFI/BOOT/${EFI_SHIM_NAME}
+[[ "${ENABLE_SECURE_BOOT}" == "1" ]] && mcopy -i "${EFI_IMG}" "${GRUB_SRC}" ::EFI/BOOT/${EFI_GRUB_NAME}
+
+# stub：先定位 ISO 根目录，再加载真实配置
+mcopy -i "${EFI_IMG}" - ::EFI/debian/grub.cfg << STUB_EOF
+search --no-floppy --label --set=root ${VOLUME_LABEL}
+configfile /EFI/debian/grub.cfg
+STUB_EOF
+
+echo "  Phase 4 完成。"
+
+# =============================================================================
+# Phase 5: 生成最终 ISO
+# =============================================================================
+echo ""; echo "[Phase 5] 生成 ISO ..."
 
 if [[ "${HAS_BIOS}" -eq 1 ]]; then
     xorriso -as mkisofs \
