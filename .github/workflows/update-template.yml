@@ -67,7 +67,7 @@ jobs:
       - name: "安装依赖"
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools mmdebstrap xorriso mtools dosfstools
+          sudo apt-get install -y musl-tools mmdebstrap xorriso mtools dosfstools debian-archive-keyring
 
       - name: "安装 Rust 工具链"
         uses: dtolnay/rust-toolchain@stable

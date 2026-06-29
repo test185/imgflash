@@ -136,6 +136,7 @@ else
 
     echo "[Phase 1] mmdebstrap ${DEBIAN_SUITE} (${ARCH}) ..."
     sudo mmdebstrap --variant=essential \
+        --keyring=/usr/share/keyrings/debian-archive-keyring.gpg \
         --include="${SIGNED_PKGS}" \
         "${DEBIAN_SUITE}" "${ROOTFS_DIR}" "${DEBIAN_MIRROR}"
     echo "  Phase 1 完成。"
