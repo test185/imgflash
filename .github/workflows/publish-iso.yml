@@ -203,35 +203,33 @@ jobs:
           COMPRESS_FORMAT: ${{ github.event.inputs.compress_format }}
           RELEASE_NAME: ${{ github.event.inputs.release_name }}
         run: |
-          cd output
           case "$COMPRESS_FORMAT" in
             gz)
-              gzip -c "${{ steps.iso_file.outputs.file }}" > "$RELEASE_NAME.iso.gz"
+              gzip -c "output/${{ steps.iso_file.outputs.file }}" > "$RELEASE_NAME.iso.gz"
               echo "file=$RELEASE_NAME.iso.gz" >> $GITHUB_OUTPUT
               echo "content_type=application/gzip" >> $GITHUB_OUTPUT
               ;;
             xz)
-              xz -c "${{ steps.iso_file.outputs.file }}" > "$RELEASE_NAME.iso.xz"
+              xz -c "output/${{ steps.iso_file.outputs.file }}" > "$RELEASE_NAME.iso.xz"
               echo "file=$RELEASE_NAME.iso.xz" >> $GITHUB_OUTPUT
               echo "content_type=application/x-xz" >> $GITHUB_OUTPUT
               ;;
             bz2)
-              bzip2 -c "${{ steps.iso_file.outputs.file }}" > "$RELEASE_NAME.iso.bz2"
+              bzip2 -c "output/${{ steps.iso_file.outputs.file }}" > "$RELEASE_NAME.iso.bz2"
               echo "file=$RELEASE_NAME.iso.bz2" >> $GITHUB_OUTPUT
               echo "content_type=application/x-bzip2" >> $GITHUB_OUTPUT
               ;;
             zip)
-              zip "$RELEASE_NAME.iso.zip" "${{ steps.iso_file.outputs.file }}"
+              zip "$RELEASE_NAME.iso.zip" "output/${{ steps.iso_file.outputs.file }}"
               echo "file=$RELEASE_NAME.iso.zip" >> $GITHUB_OUTPUT
               echo "content_type=application/zip" >> $GITHUB_OUTPUT
               ;;
             7z)
-              7z a "$RELEASE_NAME.iso.7z" "${{ steps.iso_file.outputs.file }}"
+              7z a "$RELEASE_NAME.iso.7z" "output/${{ steps.iso_file.outputs.file }}"
               echo "file=$RELEASE_NAME.iso.7z" >> $GITHUB_OUTPUT
               echo "content_type=application/x-7z-compressed" >> $GITHUB_OUTPUT
               ;;
           esac
-          rm -f "${{ steps.iso_file.outputs.file }}"
 
       - name: "删除旧版 Release 和 Tag"
         env:
@@ -252,7 +250,7 @@ jobs:
             架构: ${{ github.event.inputs.arch }}
             压缩格式: ${{ github.event.inputs.compress_format }}
             Secure Boot: ${{ github.event.inputs.secure_boot == 'true' && '启用' || '未启用' }}
-          files: output/${{ steps.compress_file.outputs.file }}
+          files: ${{ steps.compress_file.outputs.file }}
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
